@@ -2,7 +2,7 @@
 
 NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK)** framework. The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads.
 
-By unifying local inference engines (**Ollama: `llama3.2:1b`** for privacy, local embedding workflows, and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud** for deep analytical orchestration and dynamic tool-routing), NexusMind provides a stateful, interactive experience. The system's central concierge, **Nexa**, supports multi-hop reasoning, unified document indexing, and user-driven exploratory follow-ups.
+By unifying local inference engines (**Ollama: `qwen2.5-coder:7b`** for privacy, local embedding workflows, and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud** for deep analytical orchestration and dynamic tool-routing), NexusMind provides a stateful, interactive experience. The system's central concierge, **Nexa**, supports multi-hop reasoning, unified document indexing, and user-driven exploratory follow-ups.
 
 ---
 
@@ -62,7 +62,10 @@ graph TD
             Retrieval --> WTool[web_tool]:::tool
         end
         
-        CTool & NTool & WTool --> Fusion[KnowledgeFusionAgent]:::agent
+        CTool --> Fusion[KnowledgeFusionAgent]:::agent
+        NTool --> Fusion
+        WTool --> Fusion
+        
         Fusion --> |Applies Reciprocal Rank Fusion| Reasoner[ReasonerAgent]:::agent
         Reasoner --> |Multi-Hop Chain-of-Thought| Responder[ResponseAgent]:::agent
     end
@@ -75,7 +78,7 @@ graph TD
     Chroma -.-> CTool
 
     %% Hybrid Compute Targets (Ollama + Gemini)
-    FastAgent & Parser & Chunker & EntityExt & RelExt & KGVal & Indexer & Planner & Retrieval & Fusion & Reasoner --> LocalOllama[Local Ollama: llama3.2:1b]:::compute
+    FastAgent & Parser & Chunker & EntityExt & RelExt & KGVal & Indexer & Planner & Retrieval & Fusion & Reasoner --> LocalOllama[Local Ollama: qwen2.5-coder:7b]:::compute
     Concierge & Responder --> GeminiCloud[Gemini Cloud Engine]:::compute
 
     LocalOllama & GeminiCloud --> |Final Response Matrix| UI
@@ -219,7 +222,7 @@ Ensure a `.env` file exists in your project's root directory containing these co
 ```bash
 # Model Specific Target Assignments
 LOCAL_LLM_URL="http://localhost:11434"
-OLLAMA_MODEL="llama3.2:1b"
+OLLAMA_MODEL="qwen2.5-coder:7b"
 GEMINI_MODEL="gemini-2.5-flash"
 
 # Database Connection Infrastructure
@@ -251,5 +254,50 @@ chmod +x run.sh
 
 # Launch pre-flight diagnostics and Streamlit interface
 ./run.sh
+
+```
+
+---
+
+## 2. 🌐 Visualizing Your Knowledge Graph in Neo4j Browser
+
+To visually inspect the extracted graph structures and entities processed by your `Ingestion-Pipeline`, follow this quick verification guide.
+
+### Step 1: Access the Interface
+
+Open your web browser and navigate to the Neo4j default web management panel console:
+
+> **URL:** `http://localhost:7474`
+
+### Step 2: Connection Settings Configuration
+
+When the database portal splash screen prompts you, populate the login fields with your `.env` parameters:
+
+* **Connection URL:** `bolt://localhost:7687`
+* **Authentication Type:** `Username / Password`
+* **Username:** `neo4j`
+* **Password:** `rana1234`
+
+### Step 3: Useful Cypher Investigative Queries
+
+Once inside the running terminal interface worksheet box at the top, run these queries to monitor your database nodes:
+
+* **View the Entire Discovered Knowledge Graph Structure (Up to 300 items):**
+```cypher
+MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 300;
+
+```
+
+
+* **Count Total Nodes Extracted By Entity Classes:**
+```cypher
+MATCH (n) RETURN n.label AS Type, count(n) AS Total Elements ORDER BY Total Elements DESC;
+
+```
+
+
+* **Clear the Whole Sandbox DB to Restart Ingestion Anew:**
+```cypher
+MATCH (n) DETACH DELETE n;
 
 ```
