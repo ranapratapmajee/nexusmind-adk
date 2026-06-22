@@ -4,8 +4,9 @@ import logging
 import sys
 import requests
 from config.settings import settings
-from app.infrastructure.chroma_service import chroma_service
-from app.infrastructure.neo4j_service import neo4j_service
+
+# Fixed Import Paths matching your shared infrastructure module file layout
+from app.infrastructure import chroma_service, neo4j_service
 
 # Configure basic logging layout
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -43,10 +44,17 @@ def verify_infrastructure() -> bool:
             if res and res["test_val"] == 1:
                 logger.info("✅ Neo4j Graph Database Driver: ONLINE")
             else:
+                logger.error("❌ Neo4j Graph Driver test returned an invalid payload.")
                 all_passed = False
     except Exception as e:
         logger.error(f"❌ Neo4j Graph Cluster Failure: {str(e)}")
         all_passed = False
+    finally:
+        # Gracefully disconnect test hooks to avoid ghost socket states
+        try:
+            neo4j_service.close()
+        except Exception:
+            pass
 
     return all_passed
 
@@ -58,3 +66,4 @@ if __name__ == "__main__":
     else:
         logger.error("🛑 Infrastructure checks failed. Please check your docker containers.")
         sys.exit(1)
+        

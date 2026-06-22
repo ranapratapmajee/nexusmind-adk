@@ -1,8 +1,8 @@
 # 🧠 NexusMind Enterprise Architecture — Powered by Nexa
 
-NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK 2.0)** framework. The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads.
+NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK)** framework. The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads.
 
-By unifying local inference engines (**Ollama: `qwen2.5-coder:7b**` for privacy and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud: `gemini-2.5-flash**` for deep analytical synthesis), NexusMind provides a stateful, interactive experience. The system's conversational bot, **Nexa**, supports user interruptions, multi-hop reasoning, and click-to-ask follow-up cross-questions.
+By unifying local inference engines (**Ollama: `llama3.2:1b`** for privacy, local embedding workflows, and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud** for deep analytical orchestration and dynamic tool-routing), NexusMind provides a stateful, interactive experience. The system's central concierge, **Nexa**, supports multi-hop reasoning, unified document indexing, and user-driven exploratory follow-ups.
 
 ---
 
@@ -26,63 +26,59 @@ graph TD
     classDef compute fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#fff;
 
     %% Presentation Layer
-    UI[Streamlit UI & Interactive Chat]:::client <--> |Prompts & Cross-Questions| Coordinator[Master Engine Coordinator]:::orchestrator
+    UI[Streamlit UI & Interactive Chat]:::client <--> |Prompts & Cross-Questions| Gateway[SystemRootGateway Workflow]:::orchestrator
     
     %% Intent Splitting & Control
-    Coordinator --> |Injects Memory & Session Context| Guardrail[🛡️ GuardrailAgent]:::guardrail
+    Gateway --> |Executes Scan| GuardrailNode[safety_guardrail_node]:::guardrail
+    GuardrailNode -.-> |Unsafe: BLOCKED_PATH| Refusal[handling_refusal_node]:::control
+    Refusal -.-> UI
 
-    %% Safety Routing
-    Guardrail -.-> |Unsafe: Violation / PII Leak| Block[Safety Refusal Block]:::control
-    Block -.-> UI
-    Guardrail --> |Safe| ControlEngine{Control Engine Brain}:::control
+    GuardrailNode --> |Safe: SECURE_PATH| Concierge[CentralOrchestrator Agent]:::orchestrator
 
-    %% Control Engine Decision Matrix
-    ControlEngine --> |Intent: CASUAL_CHAT| FastAgent[Fast Conversational Agent]:::agent
-    ControlEngine --> |Intent: INGESTION_UPLOAD| IngestFlow[Enterprise PDF Ingestion Pipeline]:::workflow
-    ControlEngine --> |Intent: RESEARCH| Planner[Planner Agent]:::agent
+    %% Central Orchestrator Tool Routing Decision Matrix
+    Concierge --> |Tool: FastConversationalAgent| FastAgent[Fast Agent]:::agent
+    Concierge --> |Tool: Ingestion-Pipeline| IngestFlow[Ingestion-Pipeline Workflow]:::workflow
+    Concierge --> |Tool: DeepResearchPipeline| DeepResearch[DeepResearchPipeline Workflow]:::workflow
 
     %% Ingestion Pipeline 
-    subgraph Ingestion_Pipeline ["Background PDF Ingestion Pipeline (app/workflows/ingest_pipeline.py)"]
-        IngestFlow --> Parser[PDF Layout Parser Agent]:::agent
-        Parser --> Chunker[Sliding Window Chunker Agent]:::agent
-        Chunker --> EntityExt[Entity Extractor Agent]:::agent
-        EntityExt --> RelExt[Relation Extractor Agent]:::agent
-        RelExt --> KGVal[KG Validator Agent]:::agent
-        KGVal --> Indexer[Indexer Agent]:::agent
+    subgraph Ingestion_Pipeline ["Background PDF Ingestion Pipeline (app/ingest_pipeline.py)"]
+        IngestFlow --> Parser[PDFLayoutParserAgent]:::agent
+        Parser --> Chunker[SlidingWindowChunkerAgent]:::agent
+        Chunker --> EntityExt[EntityExtractorAgent]:::agent
+        EntityExt --> RelExt[RelationExtractorAgent]:::agent
+        RelExt --> KGVal[KgValidatorAgent]:::agent
+        KGVal --> Indexer[IndexerAgent]:::agent
     end
 
     %% Adaptive Runtime Multi-Agent Pipeline
-    subgraph Reasoning_Pipeline ["ADK Workflow Engine (Stateful Retrieval & Multi-Hop Reasoning)"]
-        Planner --> |Builds Search Plan| Retrieval[Retrieval Agent]:::agent
+    subgraph Reasoning_Pipeline ["Deep Research Pipeline (app/research_pipeline.py)"]
+        DeepResearch --> Planner[PlannerAgent]:::agent
+        Planner --> |Builds Search Plan| Retrieval[RetrievalAgent]:::agent
         
         %% Tool Registry
-        subgraph ADK_Tool_Registry ["MCP-Style Tool Registry (app/tools/)"]
-            Retrieval --> CTool[Chroma Tool]:::tool
-            Retrieval --> NTool[Neo4j Tool]:::tool
-            Retrieval --> WTool[Web Tool]:::tool
+        subgraph ADK_Tool_Registry ["Data Tools Registry (app/tools.py)"]
+            Retrieval --> CTool[chroma_tool]:::tool
+            Retrieval --> NTool[neo4j_tool]:::tool
+            Retrieval --> WTool[web_tool]:::tool
         end
         
-        CTool & NTool & WTool --> Fusion[Knowledge Fusion Agent]:::agent
-        Fusion --> |Applies Reciprocal Rank Fusion| Reasoner[Reasoner Agent]:::agent
-        Reasoner --> |Multi-Hop Chain-of-Thought| Responder[Response Agent]:::agent
+        CTool & NTool & WTool --> Fusion[KnowledgeFusionAgent]:::agent
+        Fusion --> |Applies Reciprocal Rank Fusion| Reasoner[ReasonerAgent]:::agent
+        Reasoner --> |Multi-Hop Chain-of-Thought| Responder[ResponseAgent]:::agent
     end
 
     %% Storage Topology
-    Indexer --> |Vector Embeddings| Chroma[(ChromaDB Vector Store)]:::storage
-    Indexer --> |Transactional Cypher MERGE| Neo4j[(Neo4j Graph Database)]:::storage
+    Indexer --> |chroma_write_tool| Chroma[(ChromaDB Vector Store)]:::storage
+    Indexer --> |neo4j_merge_tool| Neo4j[(Neo4j Graph Database)]:::storage
     
     Neo4j -.-> NTool
     Chroma -.-> CTool
 
     %% Hybrid Compute Targets (Ollama + Gemini)
-    FastAgent --> LocalOllama[Local Ollama: qwen2.5-coder:7b]:::compute
-    Reasoner --> |Dynamic Compute Scale| ModelGate{Hybrid Model Router}:::control
-    Responder --> ModelGate
-    
-    ModelGate -- "Standard Tier" --> LocalOllama
-    ModelGate -- "Extreme Compute / Token Window >100K" --> GeminiCloud[Gemini Cloud: gemini-2.5-flash]:::compute
+    FastAgent & Parser & Chunker & EntityExt & RelExt & KGVal & Indexer & Planner & Retrieval & Fusion & Reasoner --> LocalOllama[Local Ollama: llama3.2:1b]:::compute
+    Concierge & Responder --> GeminiCloud[Gemini Cloud Engine]:::compute
 
-    LocalOllama & GeminiCloud --> |Final Response + Dynamic Cross-Questions| UI
+    LocalOllama & GeminiCloud --> |Final Response Matrix| UI
 
 ```
 
@@ -94,28 +90,34 @@ The sequence diagram below displays the step-by-step transaction lifecycle of an
 sequenceDiagram
     autonumber
     actor User as Streamlit Client UI
-    participant G as GuardrailAgent
-    participant CE as ControlEngine
-    participant F as FastConversationalAgent
-    participant RP as DeepResearchPipeline (ADK Workflow)
-    participant DB as Infrastructure DB Drivers
+    participant GW as SystemRootGateway (Workflow)
+    participant SG as safety_guardrail_node
+    participant CO as CentralOrchestrator (Gemini)
+    participant EX as Selected Worker (Agent/Workflow Tool)
+    participant INF as Infrastructure Service (Chroma/Neo4j)
 
-    User->>G: Post Raw Input Text Stream / PDF Content Payload
-    alt Token Violation or Prompt Injection Detected
-        G-->>User: Short-Circuit Return Threat Safety Refusal Block
-    else State Clean
-        G->>CE: Forward Clean Text Stream
-        CE->>CE: Extract Intent (CASUAL_CHAT vs INGESTION_UPLOAD vs RESEARCH)
+    User->>GW: Post Raw Text Input or File Payload Stream
+    GW->>SG: Run Defensive Safety Scan (via GuardrailAgent)
+    alt Security Refusal Triggered (BLOCKED)
+        SG-->>User: Short-Circuit Return Standard Security Policy Refusal Notice
+    else Input Clean (SECURE_PATH)
+        SG->>CO: Hand Off Control Matrix Payload
+        CO->>CO: Evaluate Intent & Select Matching Registered Tool
         
-        alt Intent == CASUAL_CHAT
-            CE->>F: Route to Conversation Turn
-            F-->>User: Quick Text Delivery Response
-        else Intent == RESEARCH
-            CE->>RP: Launch Multi-Agent SequentialWorkflow
-            RP->>DB: Execute Query Tools (Chroma Semantic Search + Neo4j Cypher Merger)
-            DB-->>RP: Return Raw Overlapping Context Documents
-            RP->>RP: Perform Reciprocal Rank Fusion (RRF) & Multi-Hop Reasoning (CoT)
-            RP-->>User: Post Styled Report Markdown Answer + 3 Clickable Suggestion Pills
+        alt Option A: Conversational Intent
+            CO->>EX: Delegate to FastConversationalAgent
+            EX-->>User: Return Quick Text Turn Response
+        else Option B: Document Ingestion Drop ('DOCUMENT_INJECT_STREAM:')
+            CO->>EX: Route to Ingestion-Pipeline Workflow
+            EX->>INF: Write Split Paragraph Chunks & Cypher Node Matrix
+            INF-->>EX: Database Commit Summary Acknowledgments
+            EX-->>User: Render Comprehensive Processing Report Status
+        else Option C: Heavy Complex Analytics
+            CO->>EX: Delegate to DeepResearchPipeline Workflow
+            EX->>INF: Execute Retrieval Tools (chroma_tool, neo4j_tool, web_tool)
+            INF-->>EX: Return Raw Semantic Context Fragments
+            EX->>EX: Perform Reciprocal Rank Fusion (RRF) & Multi-Hop Reasoning (CoT)
+            EX-->>User: Post Styled Report Markdown Answer + 3 Suggestion Pills
         end
     end
 
@@ -123,58 +125,42 @@ sequenceDiagram
 
 ---
 
-## 2. Standardized Project Layout
+## 2. Minimalist Flat Project Layout
 
-This tree shows the directory mapping for the workspace, aligning with the structural definitions required by modern `uv` development patterns:
+The repository utilizes an optimized, flat file topology structure designed to keep folder levels at a minimum for simple execution overhead tracking:
 
 ```text
 nexusmind-adk/                             # Root workspace repository
-├── .env                                   # Target credentials, model parameters, and driver ports
-├── docker-compose.yaml                    # Local multi-container database service specs
-├── pyproject.toml                         # Modern hatchling project dependency manifest
+├── pyproject.toml                         # Project metadata and toolchain dependencies configurations
 ├── uv.lock                                # Fast internal locked dependency manifest
-├── main.py                                # Pre-flight hardware connectivity diagnostic testing script
-├── streamlit_app.py                       # Client interface and binary stream uploader layer
+├── docker-compose.yaml                    # Local multi-container vector & graph database specs
+├── main.py                                # Pre-flight hardware connectivity verification & diagnostics
+├── run.sh                                 # Global environment check & runtime service execution gateway
+├── streamlit_app.py                       # Client interface dashboard and stream uploader layer
+├── PLANNING.md                            # Blueprint, task items, and technical notes
+├── LICENSE                                # Repository permission rights
 │
-├── config/                                # Configuration Verification Layer
-│   └── settings.py                        # Pydantic Settings env loader and validator
+├── config/                                # System Settings Subsystem
+│   ├── __init__.py                        # Config initiation block
+│   └── settings.py                        # Pydantic Settings environment loader and validator
 │
-├── app/                                   # Core Application Engine Workspace
-│   ├── __init__.py                        # Core application initialization mapping
-│   │
-│   ├── core/                              # Orchestration Management Hub
-│   │   ├── control_engine.py              # Rule-based intent classifier and query analyzer
-│   │   └── llm_router.py                  # Dynamic context monitoring compute allocator
-│   │
-│   ├── models/                            # Pydantic Structured State Contracts
-│   │   ├── chat_state.py                  # Telemetry contracts for chat and retrieval nodes
-│   │   └── ingest_state.py                # Graph structural schemas for PDF parsing
-│   │
-│   ├── infrastructure/                    # Low-Level Concrete Database Drivers
-│   │   ├── chroma_service.py              # ChromaDB client wrapper & Ollama embedding generation
-│   │   └── neo4j_service.py               # Thread-safe connection pool manager for Bolt instances
-│   │
-│   ├── tools/                             # Functional MCP System Plugin Registries
-│   │   ├── indexer_tools.py               # Low-level write and data-mutation operations
-│   │   └── mcp_registry.py                # Low-level read and context-gathering tools
-│   │
-│   ├── prompts/                           # Instruction Template Vault
-│   │   └── system_prompts.py              # System prompt definitions
-│   │
-│   ├── workflows/                         # Declarative Graph Workflow Pipeline Controllers
-│   │   ├── ingest_pipeline.py             # 6-stage background document indexing manager
-│   │   └── master_pipeline.py             # Global brain controller & dynamic routing manager
-│   │
-│   └── agents/                            # Primitives for Isolated Framework Agents
-│       ├── fast_agent.py                  # Lightweight conversational turn engine
-│       ├── guardrail_agent.py             # Safety security barrier proxy
-│       ├── ingest_nodes.py                # Document ingestion indexing agents
-│       ├── research_nodes.py              # Research multi-hop retrieval agents
-│       └── router_agent.py                # Semantic intent analysis agent
+├── app/                                   # Unified Core Logic Module Workspace
+│   ├── __init__.py                        # Package init exports
+│   ├── root_gateway.py                    # Top-level gateway graph orchestrator, safety proxy, and central hub
+│   ├── research_pipeline.py               # 5-stage deep analytical reasoning workflow layout
+│   ├── ingest_pipeline.py                 # 6-stage background document parsing & graph ETL compiler
+│   ├── infrastructure.py                  # PyPDF extractors, Chroma HTTP clients, and Neo4j connection poolers
+│   ├── tools.py                           # Functional read/write database tool sets bridged to ADK wrappers
+│   └── states.py                          # Unified prompt instruction vault and structured Pydantic schemas
 │
-└── tests/                                 # Automated Validation Layer
-    └── integration/                       # End-to-End Test Modules
-        └── test_pipeline.py               # Async multi-agent transaction test suite
+├── storage/                               # Persistent Storage Volumes
+│   ├── chroma_data/                       # ChromaDB vector cluster storage directory
+│   ├── neo4j_data/                        # Neo4j Graph DBMS schema volumes
+│   ├── pg_data/                           # Regional database data mapping
+│   └── redis_data/                        # In-memory session tracking files
+│
+└── tests/                                 # Automated Quality Assurance Layer
+    └── __init__.py                        # Initialization module mapping for tests
 
 ```
 
@@ -184,28 +170,27 @@ nexusmind-adk/                             # Root workspace repository
 
 ### 3.1 Asynchronous Background Ingestion Pipeline
 
-Processes binary data buffers into clean text records across both storage systems through 6 specialized steps:
+Processes incoming files into high-fidelity context spaces across both storage engines simultaneously through 6 sequential steps:
 
-1. **`PDFLayoutParserAgent`**: Unpacks byte streams, cleans running footnotes, and extracts clear raw text.
-2. **`SlidingWindowChunkerAgent`**: Splits long text segments into consistent sliding text windows (500 chars, 100 overlap) to keep semantic chunks unbroken.
-3. **`EntityExtractorAgent`**: Extracts isolated domain nodes, matching categories like `SYSTEM`, `TECHNOLOGY`, or `PERSON`.
-4. **`RelationExtractorAgent`**: Connects matching entity structures together using clear predicates formatted in `SCREAMING_SNAKE_CASE`.
-5. **`KgValidatorAgent`**: Verifies graph consistency, drops orphaned references, and ensures perfect structural schema compliance.
-6. **`IndexerAgent`**: Communicates with the low-level service drivers to add text blocks into Chroma DB and run `MERGE` updates in Neo4j.
+1. **`PDFLayoutParserAgent`**: Unpacks layout byte streams and extracts clear, structured raw text.
+2. **`SlidingWindowChunkerAgent`**: Partitions raw text into 500-character windows with a continuous 100-character overlapping tail to preserve context.
+3. **`EntityExtractorAgent`**: Parses isolated text fragments to extract structural categories (`SYSTEM`, `TECHNOLOGY`, `PERSON`).
+4. **`RelationExtractorAgent`**: Explores intersections between items to formulate connection predicates (`SCREAMING_SNAKE_CASE`).
+5. **`KgValidatorAgent`**: Sanitizes the graph matrix by purging broken nodes or dangling connection lineages.
+6. **`IndexerAgent`**: Interacts with the data write tools (`chroma_write_tool` and `neo4j_merge_tool`) to save components to disk.
 
 ### 3.2 Dynamic Retrieval & Multi-Hop Reasoning Pipeline
 
-Processes exploratory queries by scoring context windows and applying advanced retrieval filtering:
+Processes deep exploratory queries by evaluating context indices through consecutive multi-agent tasks:
 
-* **`PlannerAgent`**: Breaks compound user text queries into targeted lookups for both vector and graph databases.
-* **`RetrievalAgent`**: Calls active data tools (`chroma_tool`, `neo4j_tool`, `web_tool`) concurrently.
-* **`KnowledgeFusionAgent`**: Merges multi-source contexts mathematically via Reciprocal Rank Fusion (RRF) to eliminate structural data block overlaps:
+* **`PlannerAgent`**: Breaks compound query instructions into targeted search strategies.
+* **`RetrievalAgent`**: Executes contextual tools (`chroma_tool`, `neo4j_tool`, `web_tool`) concurrently.
+* **`KnowledgeFusionAgent`**: Deduplicates and cross-references multi-source outputs using **Reciprocal Rank Fusion (RRF)**:
 
 $$RRF\_Score(d \in D) = \sum_{m \in M} \frac{1}{60 + r_m(d)}$$
 
-
-* **`ReasonerAgent`**: Performs multi-hop Chain-of-Thought (CoT) tracking over the ranked context block to identify distant entity linkages.
-* **`ResponseAgent`**: Compiles final reports with clean markdown, source citations, and automatically generates exactly 3 clickable follow-up question pills.
+* **`ReasonerAgent`**: Performs a multi-hop Chain-of-Thought (CoT) sequence over the fused context to resolve hidden linkages.
+* **`ResponseAgent`**: Builds the final response layout in markdown with bracketed source tracking and yields 3 interactive follow-up suggestion pills.
 
 ---
 
@@ -213,7 +198,7 @@ $$RRF\_Score(d \in D) = \sum_{m \in M} \frac{1}{60 + r_m(d)}$$
 
 ### 1. Initialize Virtual Environment and Workspace Dependencies
 
-Ensure you have `uv` installed on your machine. Run these commands from your root terminal:
+Ensure you have `uv` installed. Run these commands from your root terminal:
 
 ```bash
 # Create local virtual python environment sandbox
@@ -229,15 +214,12 @@ uv sync
 
 ### 2. Configure Environment Secrets
 
-Ensure a `.env` file exists in your project's root directory containing these exact key configurations:
+Ensure a `.env` file exists in your project's root directory containing these configurations:
 
 ```bash
-# Model Infrastructure Configurations
-GEMINI_API_KEY="your_actual_gemini_api_key_string"
-LOCAL_LLM_URL="http://localhost:11434"
-
 # Model Specific Target Assignments
-OLLAMA_MODEL="qwen2.5-coder:7b"
+LOCAL_LLM_URL="http://localhost:11434"
+OLLAMA_MODEL="llama3.2:1b"
 GEMINI_MODEL="gemini-2.5-flash"
 
 # Database Connection Infrastructure
@@ -246,7 +228,7 @@ CHROMA_PORT=8000
 
 NEO4J_URI="bolt://localhost:7687"
 NEO4J_USER="neo4j"
-NEO4J_PASSWORD="rana1234"
+NEO4J_PASSWORD="your_neo4j_password"
 
 ```
 
@@ -259,18 +241,15 @@ docker compose up -d
 
 ```
 
-### 4. Run Pre-Flight Diagnostics
+### 4. Execute Complete Pre-Flight Environment Launch
 
-Verify local endpoint statuses and cluster accessibility configurations before starting the UI layer:
-
-```bash
-uv run python main.py
-
-```
-
-### 5. Launch the Client Interface
+Use the automated orchestration script to test database availability and launch the application interface:
 
 ```bash
-uv run streamlit run streamlit_app.py
+# Make the run script executable
+chmod +x run.sh
+
+# Launch pre-flight diagnostics and Streamlit interface
+./run.sh
 
 ```
