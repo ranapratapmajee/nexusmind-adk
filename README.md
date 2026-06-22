@@ -259,7 +259,7 @@ chmod +x run.sh
 
 ---
 
-## 2. 🌐 Visualizing Your Knowledge Graph in Neo4j Browser
+## 5. 🌐 Visualizing Your Knowledge Graph in Neo4j Browser
 
 To visually inspect the extracted graph structures and entities processed by your `Ingestion-Pipeline`, follow this quick verification guide.
 
@@ -276,7 +276,7 @@ When the database portal splash screen prompts you, populate the login fields wi
 * **Connection URL:** `bolt://localhost:7687`
 * **Authentication Type:** `Username / Password`
 * **Username:** `neo4j`
-* **Password:** `rana1234`
+* **Password:** `********`
 
 ### Step 3: Useful Cypher Investigative Queries
 

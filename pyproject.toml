@@ -1,7 +1,7 @@
 # filepath: pyproject.toml
 [project]
 name = "nexusmind"
-version = "0.1.0"
+version = "0.1.1"
 description = "NexusMind — An intelligent GraphRAG cognitive assistant powered by Google ADK 2.0"
 readme = "README.md"
 requires-python = ">=3.12"

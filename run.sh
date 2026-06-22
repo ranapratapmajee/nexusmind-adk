@@ -26,6 +26,22 @@ log_error() {
     echo -e "${RED}[ERROR] $(date +'%Y-%m-%d %H:%M:%S') - $1${NC}"
 }
 
+# =========================================================
+# ⚙️ EXPLICIT PROCESS TEARDOWN TRAP HANDLER
+# =========================================================
+cleanup_services() {
+    echo ""
+    log_warn "🛑 Termination signal intercepted. Safely shutting down app runtime..."
+    # Terminate all background processes spawned within this script group
+    trap - SIGINT SIGTERM # Prevent infinite loop recursion
+    kill 0 2>/dev/null || true
+    log_info "✅ Port cleared. Goodbye!"
+    exit 0
+}
+
+# Catch Ctrl + C (SIGINT) and system stop requests (SIGTERM)
+trap cleanup_services SIGINT SIGTERM
+
 echo "========================================================="
 echo "🧠 NexusMind Engine Execution Gateway v2.5"
 echo "========================================================="
@@ -36,7 +52,6 @@ if [ -d "$VENV_DIR" ]; then
     source "$VENV_DIR/bin/activate"
 else
     log_warn "No virtual environment found at '$VENV_DIR'."
-    # Fallback checking if poetry or uv environment is being used implicitly
     if command -v uv &> /dev/null; then
         log_info "Detected 'uv' toolchain. Using 'uv run' configuration..."
         RUN_PREFIX="uv run "
@@ -52,7 +67,6 @@ fi
 # 2. Infrastructure Health Checking Dependencies
 log_info "Verifying required service availability vectors..."
 
-# Check Ollama / Local LLM URL (Defaulting to port 11434 if settings aren't loaded into env yet)
 OLLAMA_HOST="${LOCAL_LLM_URL:-http://localhost:11434}"
 log_info "Pinging Ollama Core instance at: $OLLAMA_HOST ..."
 if curl -s --output /dev/null --connect-timeout 3 "$OLLAMA_HOST"; then
@@ -62,24 +76,22 @@ else
     exit 1
 fi
 
-# Check Chroma DB (Defaulting to port 8000)
 CHROMA_PORT="${CHROMA_PORT:-8000}"
 CHROMA_HOST="${CHROMA_HOST:-localhost}"
 log_info "Checking ChromaDB HTTP Vector cluster on port: $CHROMA_PORT ..."
 if nc -z "$CHROMA_HOST" "$CHROMA_PORT" 2>/dev/null || curl -s "http://$CHROMA_HOST:$CHROMA_PORT/api/v1/heartbeat" --output /dev/null --connect-timeout 2; then
     log_info "✅ Chroma DB cluster connectivity confirmed."
 else
-    log_warn "⚠️ Chroma DB server connection timed out. Pipeline writes may crash if database container is down."
+    log_warn "⚠️ Chroma DB server connection timed out."
 fi
 
-# Check Neo4j (Defaulting to port 7687 for Bolt protocol connection)
 NEO4J_HOST="localhost"
 NEO4J_PORT="7687"
 log_info "Checking Neo4j transactional graph database engine on port: $NEO4J_PORT ..."
 if nc -z "$NEO4J_HOST" "$NEO4J_PORT" 2>/dev/null; then
     log_info "✅ Neo4j graph driver network connectivity confirmed."
 else
-    log_warn "⚠️ Neo4j port $NEO4J_PORT is unresponsive. GraphRAG pipeline features might be degraded."
+    log_warn "⚠️ Neo4j port $NEO4J_PORT is unresponsive."
 fi
 
 # 3. Export PythonPath to ensure clean app module resolution
@@ -89,7 +101,10 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)
 if [ -f "$STREAMLIT_APP" ]; then
     log_info "Spawning Streamlit Web Application Node..."
     echo "--------------------------------------------------------"
-    ${RUN_PREFIX}streamlit run "$STREAMLIT_APP" 2>&1 | tee -a "$LOG_FILE"
+    
+    # Run Streamlit directly inside the main terminal channel, avoiding pipe swallowing
+    # We use basic shell logging to ensure Ctrl+C cuts straight to the root application
+    ${RUN_PREFIX}streamlit run "$STREAMLIT_APP"
 else
     log_error "Target entrypoint UI matrix file '$STREAMLIT_APP' was not found in working path."
     exit 1

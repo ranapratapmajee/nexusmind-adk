@@ -5,11 +5,15 @@ from typing import Dict, Any
 # --- NATIVE ADK 2.0.0 ACCORDANT GRAPH PRIMITIVES ---
 from google.adk import Agent, Workflow
 from google.adk.runners import InMemoryRunner
+from google.adk.models.lite_llm import LiteLlm
 from config.settings import settings
 from app.states import PDF_PARSER_PROMPT, CHUNKER_PROMPT
 from app.tools import chroma_write_tool, neo4j_merge_tool # For ingestion
 
 logger = logging.getLogger(__name__)
+
+local_model = LiteLlm(model="ollama_chat/qwen2.5-coder:7b")
+llm = local_model
 
 # =========================================================
 # 1. SPECIALIZED INGESTION AGENT NODES
@@ -17,61 +21,55 @@ logger = logging.getLogger(__name__)
 
 parser_agent = Agent(
     name="PDFLayoutParserAgent",
-    model=settings.OLLAMA_MODEL,
+    model=llm,
     description="Extracts clean structural text from a PDF file stream dump.",
     instruction=PDF_PARSER_PROMPT,
-    output_schema=str,
     mode="single_turn"
 )
 
 chunker_agent = Agent(
     name="SlidingWindowChunkerAgent",
-    model=settings.OLLAMA_MODEL,
+    model=llm,
     description="Processes raw text into sliding window fragments.",
     instruction=CHUNKER_PROMPT + "\nRead and process the text passed as input from the preceding node.",
-    output_schema=str,
     mode="single_turn"
 )
 
 entity_extractor_agent = Agent(
     name="EntityExtractorAgent",
-    model=settings.OLLAMA_MODEL,
+    model=llm,
     description="Mines explicit entities and node categories from chunk arrays.",
     instruction="""Analyze the chunked fragments passed as input. Identify key operational entities 
     (e.g., Systems, Technologies, People, Projects). Return them as a clean JSON-formatted list of nodes.""",
-    output_schema=str,
     mode="single_turn"
 )
 
 relation_extractor_agent = Agent(
     name="RelationExtractorAgent",
-    model=settings.OLLAMA_MODEL,
+    model=llm,
     description="Identifies semantic directional connections between discovered nodes.",
     instruction="""Analyze the extracted nodes passed as input. Identify and map clear directional 
     relationships between these entities. Format connection edges using SCREAMING_SNAKE_CASE.""",
-    output_schema=str,
     mode="single_turn"
 )
 
 kg_validator_agent = Agent(
     name="KgValidatorAgent",
-    model=settings.OLLAMA_MODEL,
+    model=llm,
     description="Enforces strict schema compliance checks across node lists and edge maps.",
     instruction="""Validate the graph data passed as input. Ensure every single structural edge connects 
     a valid source and target ID present in the entities array. Drop any dangling or unmapped linkages.""",
-    output_schema=str,
     mode="single_turn"
 )
 
 indexer_agent = Agent(
     name="IndexerAgent",
-    model=settings.OLLAMA_MODEL,
+    model=llm,
     description="Database commit broker deploying text fragments to Chroma and graph entities to Neo4j.",
     instruction="""Commit the raw text chunks into Chroma DB using chroma_write_tool. 
     Then, write the verified graph structure into Neo4j using neo4j_merge_tool.
     Output a clear narrative summary detailing the number of vectors and graph nodes successfully committed.""",
     tools=[chroma_write_tool, neo4j_merge_tool],
-    output_schema=str,
     mode="single_turn"
 )
 
@@ -79,7 +77,7 @@ indexer_agent = Agent(
 # 2. DECLARATIVE WORKFLOW GRAPH MATRIX
 # =========================================================
 ingest_workflow_pipeline = Workflow(
-    name="Ingestion-Pipeline",
+    name="IngestionPipeline",
     edges=[
         (
             "START", 
