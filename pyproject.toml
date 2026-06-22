@@ -1,0 +1,26 @@
+# filepath: pyproject.toml
+[project]
+name = "nexusmind"
+version = "0.1.0"
+description = "NexusMind — An intelligent GraphRAG cognitive assistant powered by Google ADK 2.0"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-adk>=2.0.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    "chromadb>=0.4.24",
+    "neo4j>=5.18.0",
+    "redis>=5.0.1",
+    "psycopg2-binary>=2.9.9",
+    "streamlit>=1.32.0",
+    "pypdf>=6.14.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Explicitly maps our app folder to fix the wheel detection crash
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

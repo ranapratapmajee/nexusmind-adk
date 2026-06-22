@@ -1,0 +1,68 @@
+# filepath: docker-compose.yml
+version: '3.8'
+
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: nexus-vector-chroma
+    ports:
+      - "8000:8000" # Fixed to map 8000:8000 directly to align with config settings
+    environment:
+      - CHROMA_SERVER_AUTH_PROVIDER=None
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+      - PERSIST_DIRECTORY=/chroma/data
+    volumes:
+      - ./storage/chroma_data:/chroma/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:latest
+    container_name: nexus-graph-neo4j
+    ports:
+      - "7474:7474" # HTTP Connector
+      - "7687:7687" # Bolt Driver Port
+    environment:
+      - NEO4J_AUTH=neo4j/rana1234
+      - NEO4J_server_memory_heap_initial__size=256m
+      - NEO4J_server_memory_heap_max__size=512m
+      - NEO4J_server_memory_pagecache_size=256m
+      - NEO4J_PLUGINS=["apoc"] # Essential for GraphRAG operations
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
+    volumes:
+      - ./storage/neo4j_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: '2.0'
+    restart: unless-stopped
+
+  redis:
+    image: redis:latest
+    container_name: nexus-cache-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./storage/redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:latest
+    container_name: nexus-audit-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=rana1234
+      - POSTGRES_DB=nexus_telemetry
+    volumes:
+      - ./storage/pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
