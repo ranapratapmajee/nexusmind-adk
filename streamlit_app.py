@@ -2,7 +2,12 @@
 import asyncio
 from pathlib import Path
 import streamlit as st
-from app.backend_engine import execute_nexus_engine, process_file_ingestion
+
+# Native framework runners & workflow maps
+from google.adk.runners import InMemoryRunner
+from app.root_gateway import root_agent
+from app.ingest_pipeline import ingest_workflow_pipeline
+from app.infrastructure import pdf_extractor
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="google.adk")
@@ -14,7 +19,32 @@ st.set_page_config(
 )
 
 st.title("🧠 NexusMind Engine — Nexa")
-st.caption("Enterprise GraphRAG RAG Pipeline Interface (Google ADK Framework)")
+st.caption("Enterprise GraphRAG Pipeline Interface (Google ADK Framework)")
+
+# --- NATIVE ADK PERSISTENT RUNNER INITIALIZATION (CACHED) ---
+@st.cache_resource
+def get_nexus_runners():
+    """Initializes and holds single instance runners directly inside the UI context."""
+    chat_runner = InMemoryRunner(agent=root_agent, app_name="nexusmind")
+    ingest_runner = InMemoryRunner(agent=ingest_workflow_pipeline, app_name="nexusmind_batch_ingest")
+    
+    if hasattr(chat_runner, "auto_create_session"):
+        chat_runner.auto_create_session = True
+    if hasattr(ingest_runner, "auto_create_session"):
+        ingest_runner.auto_create_session = True
+        
+    return chat_runner, ingest_runner
+
+chat_runner, ingest_runner = get_nexus_runners()
+
+# Clean async wrapper to execute tasks inside Streamlit's runtime thread pool cleanly
+def run_async_task(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 # Initialize pure UI memory stores
 if "messages" not in st.session_state:
@@ -22,7 +52,7 @@ if "messages" not in st.session_state:
 if "suggestions" not in st.session_state:
     st.session_state.suggestions = []
 
-# --- SIDEBAR ATTACHMENT: SEPARATED DIRECT FILE INGESTION ---
+# --- SIDEBAR ATTACHMENT: DIRECT FILE INGESTION VIA NATIVE RUNNER ---
 with st.sidebar:
     st.header("📁 Data Ingestion Console")
     st.write("Load raw PDF documents into Chroma and Neo4j databases concurrently.")
@@ -31,31 +61,39 @@ with st.sidebar:
     if uploaded_pdf is not None and st.button("🚀 Execute Ingestion Pipeline"):
         with st.spinner("Staging asset locally and executing isolated indexing workflow..."):
             try:
-                # 1. Enforce local root data folder persistence constraints
                 data_dir = Path("data")
                 data_dir.mkdir(exist_ok=True)
                 saved_path = data_dir / uploaded_pdf.name
                 
-                # Write the binary straight to disk
                 with open(saved_path, "wb") as f:
                     f.write(uploaded_pdf.getbuffer())
                 
-                # 2. Fire direct batch processing out of the file's landing spot
-                report_output = asyncio.run(process_file_ingestion(uploaded_pdf.name))
+                # Parse layout bytes directly using infrastructure module hooks
+                with open(saved_path, "rb") as f:
+                    raw_bytes = f.read()
+                parsed_text_dump = pdf_extractor.extract_clean_text(raw_bytes)
+                payload_string = f"DOCUMENT_INJECT_STREAM:\nFilename: {uploaded_pdf.name}\nContent:\n{parsed_text_dump}"
+                
+                # ⚡ Run Ingestion directly through its native ADK workflow primitive
+                outcome = run_async_task(ingest_runner.run(
+                    input_text=payload_string,
+                    user_id="ingest_service"
+                ))
                 
                 st.success(f"✅ Ingested {uploaded_pdf.name} successfully!")
-                st.markdown(report_output)
+                st.markdown(outcome.text)
                 st.session_state.suggestions = ["Check database structural logs", "Query the uploaded content metrics"]
             except Exception as ex:
                 st.error(f"❌ Ingestion pipeline failed: {str(ex)}")
 
-# Render standard messaging log tables
+# Render standard messaging log tables from persistent session history state
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
 user_input = st.chat_input("Ask Nexa a question or analyze infrastructure vectors...")
 if user_input:
+    # Append and render user turn immediately
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
@@ -63,16 +101,18 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("🧠 Nexa is thinking..."):
             try:
-                # Execute the conversational orchestration route cleanly
-                answer = asyncio.run(execute_nexus_engine(
-                    user_id="default_user",
+                # ⚡ Run query straight to the root Supervisor Agent which passes down to your graph
+                outcome = run_async_task(chat_runner.run(
+                    input_text=user_input,
                     session_id="active_chat_session",
-                    raw_input=user_input
+                    user_id="default_user"
                 ))
+                
+                answer = outcome.text.strip() if outcome.text else "No response generated by the cognitive topology."
                 
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 st.session_state.suggestions = ["Analyze matching vector entities", "View Neo4j operational paths"]
-                st.rerun()
+                
             except Exception as ex:
                 st.error(f"❌ Core runtime error: {str(ex)}")

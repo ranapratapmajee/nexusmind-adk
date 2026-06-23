@@ -10,7 +10,7 @@ By unifying local inference engines (**Ollama: `qwen2.5-coder:7b**` via the cano
 
 ### 1.1 Macro-System Communication Subsystems
 
-The diagram below details the decoupled transaction paths: a direct file processing lane for batch document ingestion and a defensive multi-agent retrieval loop handled by the backend gateway core.
+The diagram below details the simplified transaction paths: an isolated, file-driven pipeline for background batch ingestion, and a unified, supervisor-driven execution loop mapping safely to final response targets.
 
 ```mermaid
 graph TD
@@ -26,30 +26,36 @@ graph TD
     classDef compute fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#fff;
 
     %% Presentation Layer / Data Entries
-    UI[Streamlit UI & Interactive Chat]:::client <--> |Active Chat Stream| BackendEngine[app/backend_engine.py]:::control
+    UI[Streamlit UI Chat Dashboard]:::client <--> |Direct Runner Operations| RootSupervisor[SystemRootGateway Supervisor Agent]:::orchestrator
     CLI[scripts/ingest.py CLI Tool]:::client --> |Direct File Arguments| DataFolder[data/ File Storage Directory]:::storage
     UI -.-> |Saves binaries to disk| DataFolder
 
-    %% Conversational Core Road
-    BackendEngine <--> |Orchestrates Graph Turns| Gateway[SystemRootGateway Workflow]:::orchestrator
-    Gateway --> |Executes Scanning Loop| GuardrailAgent[GuardrailAgent]:::guardrail
-    GuardrailAgent -.-> |Unsafe Input Identified| Refusal[handling_refusal_node]:::control
+    %% Chat Supervisor Route Logic
+    RootSupervisor <--> |Natively Wraps Workflow Graph| InternalGraph[GatewayRoutingGraph Workflow]:::orchestrator
+    InternalGraph --> |Step 1: Security Firewall| GuardrailAgent[GuardrailAgent]:::guardrail
+    GuardrailAgent -.-> |Unsafe Input Flagged| Refusal[handling_refusal_node]:::control
     Refusal -.-> UI
 
-    GuardrailAgent --> |Safe Input Verified| Router[ControlEngineRouter]:::orchestrator
-    Router --> |CHAT_PATH| FastAgent[FastConversationalAgent]:::agent
+    GuardrailAgent --> |Safe Input Passed| Router[ControlEngineRouter]:::orchestrator
+    Router --> |CHAT_PATH| FastAgent[FastConversationalAgent / Nexa]:::agent
     Router --> |RESEARCH_PATH| DeepResearch[DeepResearchPipeline Workflow]:::workflow
 
     %% Ingestion Lane Bypass (Decoupled & File-Driven)
-    DataFolder --> |process_file_ingestion Worker| IngestFlow[Ingestion-Pipeline Workflow]:::workflow
+    DataFolder --> |UI File Upload / Script Args| IngestFlow[IngestionPipeline Workflow]:::workflow
 
     %% Ingestion Pipeline 
     subgraph Ingestion_Pipeline ["Background PDF Ingestion Pipeline (app/ingest_pipeline.py)"]
         IngestFlow --> Parser[PDFLayoutParserAgent]:::agent
         Parser --> Chunker[SlidingWindowChunkerAgent]:::agent
-        Chunker --> EntityExt[EntityExtractorAgent]:::agent
-        EntityExt --> RelExt[RelationExtractorAgent]:::agent
-        RelExt --> KGVal[KgValidatorAgent]:::agent
+        Chunker --> ParallelBlock[GraphMinerParallelBlock Fan-Out]:::orchestrator
+        
+        subgraph Parallel_Extraction ["Concurrent Mining Steps"]
+            ParallelBlock --> EntityExt[EntityExtractorAgent]:::agent
+            ParallelBlock --> RelExt[RelationExtractorAgent]:::agent
+        end
+        
+        EntityExt --> KGVal[KgValidatorAgent Gather]:::agent
+        RelExt --> KGVal
         KGVal --> Indexer[IndexerAgent]:::agent
     end
 
@@ -82,54 +88,58 @@ graph TD
 
     %% Unified Compute Targets
     FastAgent & GuardrailAgent & Router & Parser & Chunker & EntityExt & RelExt & KGVal & Indexer & Planner & Retrieval & Fusion & Reasoner --> LocalOllama[Local Ollama via LiteLlm wrapper]:::compute
-    DeepResearch & Responder --> GeminiCloud[Gemini Cloud Engine]:::compute
+    DeepResearch & Responder & RootSupervisor --> GeminiCloud[Gemini Cloud Engine]:::compute
 
 ```
 
 ### 1.2 System Runtime Interaction Loop
 
-The sequence diagram below displays the step-by-step transaction lifecycle of an execution turn through the decoupled system architecture:
+The sequence diagram below displays the updated step-by-step transaction lifecycle showing how every frontend query routes completely through the root Supervisor Agent:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Client Interface (UI or CLI)
+    actor User as Client Interface (Streamlit UI)
     participant DF as data/ Storage Directory
-    participant BE as app/backend_engine.py
-    participant GW as SystemRootGateway (Workflow)
-    participant GA as GuardrailAgent (Ollama/Gemini)
-    participant CR as ControlEngineRouter (Ollama/Gemini)
-    participant IP as Ingestion-Pipeline (Workflow)
-    participant INF as Database Clusters (Chroma/Neo4j)
+    participant RS as root_agent (Supervisor Agent)
+    participant GW as GatewayRoutingGraph (Workflow)
+    participant GA as GuardrailAgent (Chat Mode)
+    participant CR as ControlEngineRouter (Chat Mode)
+    participant FA as FastConversationalAgent (Nexa Chat)
+    participant DR as DeepResearchPipeline (Workflow)
+    participant IP as IngestionPipeline (Workflow)
 
     %% Flow 1: Decoupled File Ingestion
-    Note over User, IP: File Ingestion Path (Bypasses Chat Orchestrator Completely)
+    Note over User, IP: File Ingestion Path (Bypasses Conversations Completely)
     User->>DF: Stage Raw PDF Document Asset Binary on Disk
-    User->>BE: Invoke process_file_ingestion(file_name) Worker
-    BE->>IP: Parse Text Layout Stream & Initialize Ingestion-Pipeline Workflow
-    IP->>INF: Write Split Paragraph Chunks & Cypher Node Relation Matrices
-    INF-->>IP: Database Transaction Commit Summary Acknowledgments
-    IP-->>User: Return Clean Plain-Text Processing Report Metrics
+    User->>IP: Invoke ingest_runner.run() Text Extraction Stream
+    IP->>IP: Process Parallel Multi-Agent Extraction & Write to Stores
+    IP-->>User: Return Validate JSON Ingestion Diagnostics Summary Report
 
     %% Flow 2: Live Chat Runtime Interaction Turn
-    Note over User, INF: Conversational Interaction Path
-    User->>BE: Post Conversational Text Input String
-    BE->>GW: Dispatch Input to SystemRootGateway Workflow Execution
-    GW->>GA: Process Defensive Safety Scan Check
+    Note over User, DR: Conversational Interaction Path (Root Supervised)
+    User->>RS: Submit raw conversational input string via chat_runner.run()
+    RS->>GW: Feed input directly into wrapped sub-workflow
+    GW->>GA: Check defensive security firewall
     alt Security Exploit / Prompt Injection Identified
-        GA-->>User: Short-Circuit Return Standard Security Policy Refusal Notice
+        GA-->>GW: Flag BLOCKED
+        GW->>RS: Diverge to handling_refusal_node
+        RS-->>User: Bubble up standard policy refusal markdown notice
     else Input Clean & Safe
-        GA->>CR: Hand Off Control Matrix Payload
-        CR->>CR: Evaluate Intent Conditions ('CASUAL_CHAT' vs 'RESEARCH')
+        GA-->>GW: Flag PASSED
+        GW->>CR: Evaluate Intent Conditions
         alt Option A: Casual Conversational Turn
-            CR->>GW: Route to FastConversationalAgent (single_turn Node)
-            GW-->>User: Return Clean Approachable Response Text
+            CR-->>GW: Classify CASUAL_CHAT
+            GW->>FA: Execute Nexa turn node (Preserves history state)
+            FA-->>GW: Yield natural approachable response text
+            GW->>RS: Pass response to supervisor envelope
+            RS-->>User: Return clean text answer to dashboard view layout
         else Option B: Multi-Hop Complex Analysis Request
-            CR->>GW: Delegate to DeepResearchPipeline Workflow
-            GW->>INF: Execute Retrieval Tools (chroma_tool, neo4j_tool, web_tool)
-            INF-->>GW: Yield Graph Entities & Semantic Text Context Fragments
-            GW->>GW: Execute Reciprocal Rank Fusion & Multi-Hop Reasoner Logic
-            GW-->>User: Render Comprehensive Markdown Answer Report + 3 Suggestion Pills
+            CR-->>GW: Classify RESEARCH
+            GW->>DR: Delegate to DeepResearchPipeline Subgraph Workflow
+            DR-->>GW: Perform tool fusion and Chain-of-Thought summaries
+            GW->>RS: Pass completed analysis report to supervisor envelope
+            RS-->>User: Return formatted report containing bracketed citations
         end
     end
 
@@ -148,7 +158,7 @@ nexusmind-adk/                             # Root workspace repository
 ├── docker-compose.yaml                    # Local multi-container vector & graph database specs
 ├── main.py                                # Pre-flight hardware connectivity verification & diagnostics
 ├── run.sh                                 # Global environment check & runtime service execution gateway
-├── streamlit_app.py                       # Client interface dashboard (Strictly UI Staging Copy Operations)
+├── streamlit_app.py                       # Client interface dashboard (Direct runner connection, no engine middleman)
 ├── PLANNING.md                            # Blueprint, task items, and technical notes
 ├── LICENSE                                # Repository permission rights
 ├── nexusmind_runtime.log                  # Rolling backend operational tracking output trace
@@ -165,29 +175,15 @@ nexusmind-adk/                             # Root workspace repository
 │   ├── ingest.py                          # Streamlined CLI module triggering file-driven ingest workers
 │   └── test_connection.py                 # Network link sanity verification scripts
 │
-├── app/                                   # Unified Core Backend Workspace Module
-│   ├── __init__.py                        # Package init exports
-│   ├── agent.py                           # Framework bridge file re-exporting root_agent for adk web UI
-│   ├── backend_engine.py                  # Core Engine (Manages Chat Sessions & process_file_ingestion)
-│   ├── root_gateway.py                    # Gateway orchestrator (Guardrail, Router, and Chat/Research paths)
-│   ├── research_pipeline.py               # 5-stage deep analytical reasoning workflow layout
-│   ├── ingest_pipeline.py                 # 6-stage background document parsing & graph ETL compiler
-│   ├── infrastructure.py                  # PyPDF extractors, Chroma HTTP clients, and Neo4j connection poolers
-│   ├── tools.py                           # Functional read/write database tool sets bridged to ADK wrappers
-│   └── states.py                          # Unified prompt instruction vault and structured Pydantic schemas
-│
-└── storage/                               # Persistent Database Container Storage Volumes
-    ├── chroma_data/                       # ChromaDB vector cluster data store volume files
-    ├── pg_data/                           # Regional relational relational database mapping data
-    ├── redis_data/                        # In-memory session tracking and cache logs
-    └── neo4j_data/                        # Neo4j Graph DBMS Active Schema Files
-        ├── dbms/                          # System security configurations (auth.ini)
-        ├── databases/                     # Internal transactional graphs database mapping paths
-        │   ├── neo4j/                     # Core default operational data store nodes
-        │   └── system/                    # Database system catalog definitions
-        └── transactions/                  # Uncommitted operational log structures
-            ├── neo4j/                     # Runtime transactional queries logs
-            └── system/                    # Framework metadata lifecycle commits
+└── app/                                   # Unified Core Backend Workspace Module
+    ├── __init__.py                        # Package init exports
+    ├── agent.py                           # Framework bridge file re-exporting root_agent for adk web UI
+    ├── root_gateway.py                    # Gateway orchestrator (Supervisor Agent, Router Graph, and Paths)
+    ├── research_pipeline.py               # 5-stage deep analytical reasoning workflow layout
+    ├── ingest_pipeline.py                 # 6-stage background processing utilizing ParallelAgent forks
+    ├── infrastructure.py                  # PyPDF extractors, Chroma HTTP clients, and Neo4j connection poolers
+    ├── tools.py                           # Functional read/write database tool sets bridged to ADK wrappers
+    └── states.py                          # Unified prompt instruction vault and structured Pydantic schemas
 
 ```
 
@@ -195,17 +191,19 @@ nexusmind-adk/                             # Root workspace repository
 
 ## 3. Granular Agent & Pipeline Engineering Details
 
-### 3.1 Asynchronous Background Ingestion Pipeline
+### 3.1 Parallel Async Background Ingestion Pipeline
 
-Processes incoming files into high-fidelity context spaces across both storage engines simultaneously through 6 sequential steps, triggered directly via `process_file_ingestion(file_name)`.
+Processes incoming files into high-fidelity context spaces across both storage engines simultaneously through structural steps, utilizing native ADK `ParallelAgent` async blocks:
 
 ```mermaid
 graph LR
     Start([data/file]) --> Parser[PDFLayoutParserAgent]
     Parser --> Chunker[SlidingWindowChunkerAgent]
-    Chunker --> EntityExt[EntityExtractorAgent]
-    EntityExt --> RelExt[RelationExtractorAgent]
-    RelExt --> KGVal[KgValidatorAgent]
+    Chunker --> ParallelFork{ParallelAgent Fork}
+    ParallelFork --> EntityExt[EntityExtractorAgent]
+    ParallelFork --> RelExt[RelationExtractorAgent]
+    EntityExt --> KGVal[KgValidatorAgent Gather]
+    RelExt --> KGVal
     KGVal --> Indexer[IndexerAgent]
     Indexer --> Chroma[(ChromaDB)]
     Indexer --> Neo4j[(Neo4j Graph)]
@@ -336,7 +334,7 @@ Open your web browser and navigate to the developer server instance panel:
 
 ### Step 3: Diagnostic Insights Provided
 
-* **Trace Timeline Tab**: Track exactly which edges fired inside the `SystemRootGateway` graph matrix (e.g., watching a transaction hop smoothly from `ControlEngineRouter` to `FastConversationalAgent`).
+* **Trace Timeline Tab**: Track exactly which edges fired inside the `SystemRootGateway` supervisor envelope (e.g., watching a transaction move cleanly through the `GatewayRoutingGraph` sub-flow).
 * **System Instructions Swap Audit**: Inspect the `systemInstructionChanged` flags to confirm that prompts are cleanly re-allocated as intents shift, entirely isolating execution memory states.
 * **Token Usage Metrics Table**: Track prompt tokens count, completion counts, and invocation IDs to pinpoint performance blockages on the fly.
 
@@ -395,5 +393,3 @@ LIMIT 50;
 MATCH (n) DETACH DELETE n;
 
 ```
-
----
