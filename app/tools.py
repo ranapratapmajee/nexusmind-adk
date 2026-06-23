@@ -3,51 +3,16 @@ import json
 import logging
 from typing import List, Dict, Any
 import requests
-from config.settings import settings
+from bs4 import BeautifulSoup
 from app.infrastructure import chroma_service, neo4j_service
 
 logger = logging.getLogger(__name__)
 
-# Extending ChromaService capability inline for direct query parsing
-def _execute_chroma_query(query_text: str, limit: int = 3) -> List[Dict[str, Any]]:
-    """Helper method executing raw HTTP collection sweeps against Chroma handle."""
-    try:
-        collection = chroma_service.get_or_create_collection()
-        # Vectorize incoming query text via Ollama bridge signature
-        query_vector = chroma_service._generate_embedding(query_text)
-        
-        results = collection.query(
-            query_embeddings=[query_vector],
-            n_results=limit
-        )
-        
-        documents = results.get("documents", [[]])[0]
-        ids = results.get("ids", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        
-        output = []
-        for i in range(len(ids)):
-            output.append({
-                "id": ids[i],
-                "text": documents[i],
-                "metadata": metadatas[i] if metadatas else {}
-            })
-        return output
-    except Exception as e:
-        logger.error(f"❌ Low-level Chroma query failed: {str(e)}")
-        return []
+DUCKDUCKGO_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
 
-def _execute_chroma_fetch(chunk_id: str) -> str:
-    """Helper method fetching a specific text block by ID from Chroma."""
-    try:
-        collection = chroma_service.get_or_create_collection()
-        res = collection.get(ids=[chunk_id])
-        docs = res.get("documents", [])
-        return docs[0] if docs else ""
-    except Exception as e:
-        logger.error(f"❌ Low-level Chroma get failed for {chunk_id}: {str(e)}")
-        return ""
-
+def _clean_text(value: str) -> str:
+    """White-space compressor utility."""
+    return " ".join((value or "").split()).strip()
 
 # =========================================================
 # 1. ATOMIC DATA INGESTION TOOLS
@@ -56,12 +21,7 @@ def _execute_chroma_fetch(chunk_id: str) -> str:
 def chroma_write(chunk_text: str, document_name: str, chunk_index: int) -> str:
     """Inserts a single raw child text chunk into the Chroma vector pool index."""
     chunk_id = f"{document_name}_chunk_{chunk_index}"
-    
-    # 📡 LIVE CONSOLE TRACE PRINT
     print(f"📡 [CHROMA WRITE] 📥 Staging Vector Allocation Task -> ID: {chunk_id}")
-    print(f"   ├─ Preview: \"{str(chunk_text)[:60].replace('\n', ' ')}...\"")
-    print(f"   └─ Metadata Target: {{'source_file': '{document_name}', 'chunk_index': {chunk_index}}}")
-    
     try:
         chroma_service.insert_chunk(
             chunk_text=chunk_text, 
@@ -69,7 +29,7 @@ def chroma_write(chunk_text: str, document_name: str, chunk_index: int) -> str:
             chunk_index=chunk_index
         )
         print(f"   └── ✅ [CHROMA SUCCESS] Linked successfully to Vector Store cluster.")
-        return chunk_id  # ⚡ FIX: Returns exact ID token for downstream Neo4j binding
+        return chunk_id  
     except Exception as e:
         print(f"   └── ❌ [CHROMA ERROR] Flush failure: {str(e)}")
         logger.error(f"Failed atomic vector write: {str(e)}")
@@ -77,15 +37,9 @@ def chroma_write(chunk_text: str, document_name: str, chunk_index: int) -> str:
 
 def neo4j_merge_node(name: str, entity_type: str, properties: Dict[str, Any], chunk_id: str) -> bool:
     """Merges a Domain Concept node into Neo4j and binds its provenance pointer to a Chroma Chunk ID."""
-    # 📡 LIVE CONSOLE TRACE PRINT
     print(f"🔗 [NEO4J MERGE NODE] 🛰️ Synthesizing Entity -> [{entity_type}] Name: '{name}'")
-    print(f"   └─ Provenance Anchor: {chunk_id}")
-    
     try:
-        # Utilize base infrastructure structure logic safely
         neo4j_service.merge_entity_node(node_id=name, label_type=entity_type, property_map=properties)
-        
-        # Link entity straight to unique child tracking node token
         cypher_prov = """
         MERGE (c:Entity {id: $chunk_id})
         SET c.label = 'ChildChunk'
@@ -95,7 +49,6 @@ def neo4j_merge_node(name: str, entity_type: str, properties: Dict[str, Any], ch
         """
         with neo4j_service._driver.session() as session:
             session.run(cypher_prov, name=name, chunk_id=chunk_id)
-            
         print(f"   └── ✅ [NEO4J SUCCESS] Node structural transaction merged cleanly.")
         return True
     except Exception as e:
@@ -105,16 +58,10 @@ def neo4j_merge_node(name: str, entity_type: str, properties: Dict[str, Any], ch
 
 def neo4j_merge_claim(source: str, target: str, claim_id: str, relationship_type: str, properties: Dict[str, Any], chunk_id: str) -> bool:
     """Creates a reified Semantic Claim node connecting two concept entities, bound to a chunk ID."""
-    # 📡 LIVE CONSOLE TRACE PRINT
     print(f"⚙️ [NEO4J MERGE CLAIM] ⛓️ Reifying Edge Link -> ({source}) -[:{relationship_type}]-> ({target})")
-    print(f"   └─ Claim Slug Identifier: '{claim_id}'")
-    
     try:
-        # Merge the Interaction Claim node using infrastructure defaults
         properties["interaction_type"] = relationship_type
         neo4j_service.merge_entity_node(node_id=claim_id, label_type="Interaction", property_map=properties)
-        
-        # Draw structural flow tracking linkages across boundaries
         cypher_bind = """
         MATCH (s {id: $source})
         MATCH (t {id: $target})
@@ -127,7 +74,6 @@ def neo4j_merge_claim(source: str, target: str, claim_id: str, relationship_type
         """
         with neo4j_service._driver.session() as session:
             session.run(cypher_bind, source=source, target=target, claim_id=claim_id, chunk_id=chunk_id)
-            
         print(f"   └── ✅ [NEO4J SUCCESS] Interaction path established.")
         return True
     except Exception as e:
@@ -137,70 +83,99 @@ def neo4j_merge_claim(source: str, target: str, claim_id: str, relationship_type
 
 
 # =========================================================
-# 2. ATOMIC HYBRID RETRIEVAL TOOLS
+# 2. HIGH-RELIABILITY RETRIEVAL TOOLS
 # =========================================================
 
-def chroma_search(query_text: str) -> List[Dict[str, Any]]:
-    """Stage 1: Executes a similarity pass across Chroma to grab the top child sub-chunks."""
+def graph_rag_retrieval(query_text: str) -> str:
+    """
+    Executes a complete Bottom-Up GraphRAG retrieval pass natively in Python.
+    Finds top 3 child chunks in Chroma, climbs up to Neo4j for parent context.
+    """
     query_clean = str(query_text).strip()
-    logger.info(f"🛰️ [Stage 1 Chroma Sweep] Sweeping space for query -> '{query_clean}'")
-    print(f"🛰️ [Stage 1 Chroma Sweep] Scanning vector index for similarity with: '{query_clean}'")
+    print(f"🛰️ [GraphRAG Pipeline] Initiating unified retrieval pass for: '{query_clean}'")
     
-    results = _execute_chroma_query(query_clean, limit=3)
-    return [{
-        "chunk_id": item["id"],
-        "text": item["text"],
-        "source_file": item["metadata"].get("source_file", "source_pdf")
-    } for item in results]
+    try:
+        collection = chroma_service.get_or_create_collection()
+        query_vector = chroma_service._generate_embedding(query_clean)
+        results = collection.query(query_embeddings=[query_vector], n_results=3)
+        documents = results.get("documents", [[]])[0]
+        ids = results.get("ids", [[]])[0]
+    except Exception as e:
+        logger.error(f"❌ Low-level Chroma step failed: {str(e)}")
+        return "Error gathering local vector chunks."
 
-def neo4j_traverse(chunk_id: str) -> List[Dict[str, Any]]:
-    """Stage 2: Discovers connected multi-hop concepts, properties, and Claims from the graph."""
-    id_clean = str(chunk_id).strip()
-    logger.info(f"🔗 [Stage 2 Neo4j Flow] Expanding structural connections for chunk -> '{id_clean}'")
-    print(f"🔗 [Stage 2 Neo4j Flow] Advancing graph discovery trail outward from anchor point: '{id_clean}'")
-    
+    if not ids:
+        return "No local matching vector documents found."
+
+    combined_context = ["=== LOCAL TEXT CHUNKS (CHROMA) ==="]
+    for idx, doc_text in zip(ids, documents):
+        combined_context.append(f"[{idx}]: {doc_text}")
+
+    combined_context.append("\n=== KNOWLEDGE GRAPH RELATIONSHIPS & PARENTS (NEO4J) ===")
     cypher_query = """
     MATCH (c {id: $chunk_id})<-[:MENTIONED_IN|PROVENANCE_OF]-(node)
     OPTIONAL MATCH (node)-[r]->(target)
     RETURN node.id AS element_id, node.label AS element_type, type(r) AS connection, target.id AS neighbor_id
-    LIMIT 8
+    LIMIT 5
     """
     try:
         with neo4j_service._driver.session() as session:
-            result = session.run(cypher_query, chunk_id=id_clean)
-            records = result.data()
-            
-        return [{
-            "origin_element": r["element_id"],
-            "element_type": r["element_type"],
-            "relationship_path": r["connection"] or "EXISTS_IN",
-            "connected_target": r["neighbor_id"] or "SELF"
-        } for r in records]
+            for chunk_id in ids:
+                res = session.run(cypher_query, chunk_id=chunk_id)
+                records = res.data()
+                if records:
+                    combined_context.append(f"\nStructure linked to Child chunk [{chunk_id}]:")
+                    for r in records:
+                        combined_context.append(
+                            f" - Entity: {r['element_id']} ({r['element_type']}) "
+                            f"-[:{r['connection'] or 'EXISTS_IN'}]-> Neighbor: {r['neighbor_id'] or 'SELF'}"
+                        )
     except Exception as e:
-        logger.error(f"Graph context traversal failed: {str(e)}")
-        return []
+        logger.error(f"❌ Low-level Neo4j step failed: {str(e)}")
+        combined_context.append("[Warning: Knowledge graph links could not be read]")
 
-def chroma_fetch(chunk_id: str) -> str:
-    """Stage 3: Fetches targeted text content from Chroma for items found via the graph lookup."""
-    id_clean = str(chunk_id).strip()
-    logger.info(f"🎯 [Stage 3 Chroma Precision Pull] Fetching content data block for -> '{id_clean}'")
-    print(f"🎯 [Stage 3 Chroma Precision Pull] Executing direct lookup for fragment ID: '{id_clean}'")
-    return _execute_chroma_fetch(id_clean)
+    return "\n".join(combined_context)
+
 
 def web_search(search_phrase: str) -> str:
-    """Stage 4: Scraping fallback tool invoked dynamically if the local context fails evaluation."""
+    """
+    Executes a functional form-encoded POST lookup against DuckDuckGo.
+    Returns clean structural result snippets.
+    """
     phrase_clean = str(search_phrase).strip()
-    logger.info(f"🌐 [Stage 4 Web Search] Fetching live backup metrics for -> '{phrase_clean}'")
-    print(f"🌐 [Stage 4 Web Search] Data Gap Detected! Launching live backup fallback search for: '{phrase_clean}'")
-    
-    # Simple direct endpoint fallback execution pass
-    url = f"https://html.duckduckgo.com/html/?q={phrase_clean}"
+    if not phrase_clean:
+        return "No search query provided."
+
+    print(f"🌐 [Web Search Node] Dispatching POST form-vector lookup for: '{phrase_clean}'")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-        resp = requests.get(url, headers=headers, timeout=8)
-        if resp.status_code == 200 and len(resp.text) > 500:
-            print(f"   └── ✅ [WEB SUCCESS] Scraped live search snapshot metrics successfully.")
-            return f"Live web snapshot summaries for '{phrase_clean}': Extracted latest document trends context successfully."
-    except Exception as ex:
-        print(f"   └── ❌ [WEB ERROR] Live trace network lookup timed out: {str(ex)}")
-    return f"Default backup documentation tracking segment for: '{phrase_clean}'."
+        # ⚡ Utilizing the exact high-density form-encoded execution pass
+        resp = requests.post(DUCKDUCKGO_HTML_ENDPOINT, data={"q": phrase_clean}, headers=headers, timeout=10.0)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception as e:
+        logger.error(f"[Core Web Search Failure Exception] Query: {phrase_clean} | Log: {e}")
+        return f"Web search could not retrieve live documentation insights for tracking frame: '{phrase_clean}'."
+
+    soup = BeautifulSoup(html, "html.parser")
+    compiled_blocks = []
+    
+    # Trace through exact matching visual classes from your utility tool code
+    for result in soup.select(".result")[:3]:
+        link_el = result.select_one(".result__title a")
+        snippet_el = result.select_one(".result__snippet")
+
+        title = _clean_text(link_el.get_text(" ", strip=True) if link_el else "")
+        body = _clean_text(snippet_el.get_text(" ", strip=True) if snippet_el else "")
+
+        if title or body:
+            compiled_blocks.append(f"- Title: {title}\n  Snippet: {body}")
+
+    if not compiled_blocks:
+        return f"No visual text records parsed out of raw document results for: '{phrase_clean}'."
+
+    return "=== LIVE INTERNET CONTEXT ===\n" + "\n\n".join(compiled_blocks)

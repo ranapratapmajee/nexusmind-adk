@@ -5,12 +5,12 @@ from google.adk import Agent, Workflow, Event
 from google.adk.models.lite_llm import LiteLlm
 from config.settings import settings
 
-# Import the multi-stage retrieval tools we created
-from app.tools import chroma_search, neo4j_traverse, chroma_fetch, web_search
+# 🌟 UPDATED: Import the simplified high-reliability tools from tools.py
+from app.tools import graph_rag_retrieval, web_search
 
 logger = logging.getLogger(__name__)
 
-# 🚀 UPGRADE: Route the complex multi-hop research pipeline through your Gemini engine
+# 🚀 KEEP LOCAL: Route the complex multi-hop research pipeline through your local engine
 research_llm = LiteLlm(model=settings.OLLAMA_MODEL)
 
 # =========================================================
@@ -22,13 +22,18 @@ planner_agent = Agent(
     model=research_llm,
     description="Deconstructs inquiries into targeted vector and semantic graph entry parameters.",
     instruction="""
-    ROLE: Search Parameters Architect.
-    TASK: Convert the user's question into precise string keys for step-by-step vector and graph tool execution.
+    ROLE: Search Parameters Architect & Intent Deconstructor.
     
-    OUTPUT FORMAT FORMATTING:
-    Output a valid JSON object with 'seed_query' mapping to the core question. Avoid markdown or chatter.
+    TASK: Convert the user's primary question into a precise, clean search term key optimized for concurrent vector, graph, and web tool execution.
+    
+    STRICT OUTPUT RULES:
+    1. Output EXACTLY a valid RFC-compliant JSON object containing the 'seed_query' key mapping to the distilled semantic question.
+    2. Do NOT wrap the JSON block inside any markdown formatting tags (e.g., do not use ```json).
+    3. Do NOT include any conversational introduction, trailing confirmation commentary, or system feedback text.
+    
+    TARGET SCHEMATIC:
     {
-        "seed_query": "primary meaning string"
+        "seed_query": "extracted clean query string"
     }
     """,
     mode="single_turn"
@@ -37,101 +42,85 @@ planner_agent = Agent(
 retrieval_agent = Agent(
     name="RetrievalAgent",
     model=research_llm,
-    description="Autonomous engine orchestrating multi-stage context collection tool sequences.",
+    description="Autonomous engine running parallel database and web extractions.",
     instruction="""
-    ROLE: Hybrid Multi-Stage Retrieval Gatherer.
-    TASK: Execute the available tools in sequence to build a complete context picture.
+    ROLE: Unified Context Collector.
     
-    SEQUENTIAL PLAYBOOK:
-    1. Call `chroma_search` using the 'seed_query' parameter to collect initial child chunk text blocks.
-    2. Read the 'chunk_id' from those vector results and pass it directly into `neo4j_traverse`.
-    3. Look closely at the graph data dictionary keys: 'origin_element', 'relationship_path', and 'connected_target'. 
-       - If 'connected_target' contains a string format matching a vector anchor (e.g. 'chunk_X'), pass that ID into `chroma_fetch` to execute a precision text block pull.
+    TASK: Gather internal database knowledge and external web insights simultaneously using your tools.
     
-    Combine all text documents and structural paths returned by your tool calls into a single, unsummarized context block and pass it downstream.
+    CRITICAL STEP EXECUTION:
+    1. Call `graph_rag_retrieval` using the 'seed_query' parameter to execute the local database data harvest.
+    2. Call `web_search` using the 'seed_query' parameter to pull live web text anchors.
+    
+    FALLBACK & COMPILATION RULE:
+    - Combine the text output from BOTH tools into one single context block.
+    - CRITICAL DETECTOR: If the `graph_rag_retrieval` tool indicates that no local chunks were found or failed, do NOT abort the turn. Rely entirely on the output from `web_search` to feed the downstream reasoning pipeline.
+    - Pass the raw aggregated text block downstream without altering or dropping any facts.
     """,
     tools=[
-        chroma_search,
-        neo4j_traverse,
-        chroma_fetch
+        graph_rag_retrieval,
+        web_search
     ],
     mode="single_turn"
 )
 
-gatekeeper_agent = Agent(
-    name="ContextGatekeeperAgent",
+analytical_synthesis_agent = Agent(
+    name="AnalyticalSynthesisAgent",
     model=research_llm,
-    description="Evaluates context data completeness and controls web search fallback triggers.",
+    description="Consolidates multi-source payloads and runs deep Chain-of-Thought relationship deduction.",
     instruction="""
-    ROLE: Context Completeness Gatekeeper.
-    TASK: Evaluate if the gathered database context contains enough detailed facts to comprehensively answer the user's original query.
+    ROLE: Cross-Source Knowledge Fusion Processor & Chain-of-Thought Reasoner.
     
-    STRICT VERDICT RULES:
-    - If the database context is thorough, detailed, and directly answers the question -> Output exactly: SUFFICIENT
-    - If the database context is empty, brief, or missing specific details -> Call `web_search` using the query, merge the internet search data with the database records, and output the consolidated text.
-    """,
-    tools=[web_search],
-    mode="single_turn"
-)
-
-fusion_agent = Agent(
-    name="KnowledgeFusionAgent",
-    model=research_llm,
-    description="Applies ranking and deduplication across multi-source data blocks.",
-    instruction="""
-    TASK: Deduplicate data streams from the gatekeeper node. Group overlapping points logically and organize them into a clean, high-density unified layout. Keep all source references intact.
-    """,
-    mode="single_turn"
-)
-
-reasoner_agent = Agent(
-    name="ReasonerAgent",
-    model=research_llm, 
-    description="Multi-hop Chain-of-Thought engine.",
-    instruction="""
-    TASK: Perform step-by-step logic deduction using the fused data text block. Document your reasoning path (Step 1, Step 2, etc.), tracing how graph relationships explain your vector facts. Do not guess beyond the provided text.
+    TASK: Receive the raw multi-source retrieval stream, eliminate structural noise, and execute a multi-hop deductive logical audit trail.
+    
+    PHASE 1 - KNOWLEDGE FUSION & DEDUPLICATION:
+    - Group overlapping concepts, entities, and data points logically.
+    - Clean away noisy structural text artifacts and repetitive metadata logs.
+    - Ensure every distinct fact group keeps its source tracking markers (e.g., source chunk IDs or web domains) fully intact.
+    
+    PHASE 2 - CHAIN-OF-THOUGHT REASONING:
+    - Conduct an explicit, step-by-step logical analysis using only the fused facts.
+    - Map out an analytical trail (Step 1, Step 2, etc.) tracing out how live internet insights align with or support your local database vector facts and graph structures.
+    
+    STRICT OPERATIONAL CONTROLS:
+    - GROUNDING ONLY: Do not guess, extrapolate, or introduce external assumptions. If a fact is not explicitly mentioned in the context payload, treat it as entirely non-existent.
+    - NO STATUS NOISE: Do not print internal agent task tracking logs, status checkmarks, or pipeline procedural comments.
     """,
     mode="single_turn"
 )
 
+# 2026 temporal configuration anchored via settings
 response_agent = Agent(
     name="ResponseAgent",
     model=research_llm, 
     description="Transforms analytical trails into clean markdown summaries.",
     instruction="""
-    TASK: Synthesize the reasoning trail into a final response. Use clear Markdown layout structures (headings, lists, tables). Embed explicit, inline citations pointing directly back to the database sources. Do not include introductory filler.
+    ROLE: Nexa Premium Assistant Synthesizer.
+    
+    TASK: Transform the incoming analytical reasoning trail and fused fact maps into a premium, comprehensive, user-facing final answer.
+    
+    CRITICAL STRUCTURE & LAYOUT RULES:
+    1. TYPOGRAPHY: Organize information cleanly using clear Markdown layout structures (explicit semantic headings, organized bulleted lists, and clear comparative matrices where applicable).
+    2. INLINE CITATIONS: Every factual claim must be explicitly anchored using inline citations pointing back to the original database chunk IDs or web domain origins (e.g., "...as verified in [chunk_4]").
+    3. ZERO INTRODUCTION FILLER: Start directly with the substantive answer text. Do NOT use introductory pleasantries or meta-commentary (e.g., "Based on the provided reasoning trail...").
+    4. NO AGENT LISTINGS: Do not name or reference internal agent node workflow names in the output.
     """,
     mode="single_turn"
 )
 
 # =========================================================
-# 2. DYNAMIC WORKFLOW ROUTING FUNCTION
+# 2. EXPORTED WORKFLOW TOPOLOGY
 # =========================================================
 
-def process_gatekeeper_decision(node_input: Any, invocation_context: Any = None) -> str:
-    """Passes the complete evaluation payload down to the fusion engine."""
-    text_content = getattr(node_input, "text", str(node_input))
-    logger.info("🛡️ Context Gatekeeper Evaluation Completed. Forwarding text data stream to Fusion core.")
-    return text_content
-
-# =========================================================
-# 3. EXPORTED WORKFLOW TOPOLOGY
-# =========================================================
-
-deep_research_subgraph = Workflow(
-    name="DeepResearchPipeline",
+deep_research_workflow = Workflow(
+    name="DeepResearchWorkflow",
     edges=[
         # Blueprint and Gathering Phase
         ("START", planner_agent),
         (planner_agent, retrieval_agent),
         
-        # Guard Phase: Intercepting context to check for sparse data bounds
-        (retrieval_agent, gatekeeper_agent),
-        (gatekeeper_agent, process_gatekeeper_decision),
-        
-        # Synthesis and Writing Phase
-        (process_gatekeeper_decision, fusion_agent),
-        (fusion_agent, reasoner_agent),
-        (reasoner_agent, response_agent)
+        # High-Density Synthesis and Writing Phase
+        (retrieval_agent, analytical_synthesis_agent),
+        (analytical_synthesis_agent, response_agent)
     ]
 )

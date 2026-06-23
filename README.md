@@ -264,6 +264,10 @@ docker compose up -d
 
 Because `nomic-embed-text` enforces a strict 768-dimension coordinate system, old database runs must be reset to avoid matrix conflicts:
 
+```
+http://localhost:7474
+```
+
 ```cypher
 // Clear Neo4j from your Neo4j Browser window:
 MATCH (n) DETACH DELETE n;
