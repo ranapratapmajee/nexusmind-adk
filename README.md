@@ -84,7 +84,6 @@ graph TD
     FastAgent & GuardrailAgent & Router & Parser & Chunker & EntityExt & RelExt & KGVal & Indexer & Planner & Retrieval & Fusion & Reasoner --> LocalOllama[Local Ollama via LiteLlm wrapper]:::compute
     DeepResearch & Responder --> GeminiCloud[Gemini Cloud Engine]:::compute
 
-
 ```
 
 ### 1.2 System Runtime Interaction Loop
@@ -175,10 +174,16 @@ nexusmind-adk/                             # Root workspace repository
 │   └── states.py                          # Unified prompt instruction vault and structured Pydantic schemas
 │
 ├── storage/                               # Persistent Database Container Storage Volumes
-│   ├── chroma_data/                       # ChromaDB vector cluster storage directory
-│   ├── neo4j_data/                        # Neo4j Graph DBMS schema volumes
-│   ├── pg_data/                           # Regional database data mapping
-│   └── redis_data/                        # In-memory session tracking files
+│   ├── chroma_data/                       # ChromaDB vector cluster data store volume files
+│   ├── pg_data/                           # Regional relational relational database mapping data
+│   ├── redis_data/                        # In-memory session tracking and cache logs
+│   └── neo4j_data/                        # Neo4j Graph DBMS Active Schema Files
+│       ├── databases/                     # Internal transactional graphs database mapping paths
+│       │   ├── neo4j/                     # Core default operational data store nodes
+│       │   └── system/                    # Database system catalog definitions
+│       └── transactions/                  # Uncommitted operational log structures
+│           ├── neo4j/                     # Runtime transactional queries logs
+│           └── system/                    # Framework metadata lifecycle commits
 │
 └── tests/                                 # Automated Quality Assurance Layer
     └── __init__.py                        # Initialization module mapping for tests
@@ -330,3 +335,5 @@ MATCH (n) RETURN n.label AS Type, count(n) AS Total Elements ORDER BY Total Elem
 MATCH (n) DETACH DELETE n;
 
 ```
+
+---
