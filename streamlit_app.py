@@ -1,8 +1,8 @@
 # filepath: streamlit_app.py
 import asyncio
+from pathlib import Path
 import streamlit as st
-from app.backend_engine import execute_nexus_engine
-from app.infrastructure import pdf_extractor
+from app.backend_engine import execute_nexus_engine, process_file_ingestion
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="google.adk")
@@ -22,27 +22,28 @@ if "messages" not in st.session_state:
 if "suggestions" not in st.session_state:
     st.session_state.suggestions = []
 
-# --- SIDEBAR ATTACHMENT: PDF UPLOADER CONTROL ---
+# --- SIDEBAR ATTACHMENT: SEPARATED DIRECT FILE INGESTION ---
 with st.sidebar:
     st.header("📁 Data Ingestion Console")
     st.write("Load raw PDF documents into Chroma and Neo4j databases concurrently.")
     uploaded_pdf = st.file_uploader("Select Target PDF Document", type=["pdf"])
     
     if uploaded_pdf is not None and st.button("🚀 Execute Ingestion Pipeline"):
-        with st.spinner("Parsing document layouts and running multi-agent indexing..."):
+        with st.spinner("Staging asset locally and executing isolated indexing workflow..."):
             try:
-                raw_bytes = uploaded_pdf.getvalue()
-                parsed_text_dump = pdf_extractor.extract_clean_text(raw_bytes)
-                payload_string = f"DOCUMENT_INJECT_STREAM:\nFilename: {uploaded_pdf.name}\nContent:\n{parsed_text_dump}"
+                # 1. Enforce local root data folder persistence constraints
+                data_dir = Path("data")
+                data_dir.mkdir(exist_ok=True)
+                saved_path = data_dir / uploaded_pdf.name
                 
-                # Simple stateless backend execution call
-                report_output = asyncio.run(execute_nexus_engine(
-                    user_id="nexus_admin",
-                    session_id="static_ingest_session",
-                    raw_input=payload_string
-                ))
+                # Write the binary straight to disk
+                with open(saved_path, "wb") as f:
+                    f.write(uploaded_pdf.getbuffer())
                 
-                st.success("✅ Ingestion Completed Successfully!")
+                # 2. Fire direct batch processing out of the file's landing spot
+                report_output = asyncio.run(process_file_ingestion(uploaded_pdf.name))
+                
+                st.success(f"✅ Ingested {uploaded_pdf.name} successfully!")
                 st.markdown(report_output)
                 st.session_state.suggestions = ["Check database structural logs", "Query the uploaded content metrics"]
             except Exception as ex:
@@ -62,7 +63,7 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("🧠 Nexa is thinking..."):
             try:
-                # Let the backend automatically evaluate conversations using the ADK context
+                # Execute the conversational orchestration route cleanly
                 answer = asyncio.run(execute_nexus_engine(
                     user_id="default_user",
                     session_id="active_chat_session",

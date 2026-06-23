@@ -2,7 +2,7 @@
 
 NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK)** framework. The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads.
 
-By unifying local inference engines (**Ollama: `qwen2.5-coder:7b`** for privacy, local embedding workflows, and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud** for deep analytical orchestration and dynamic tool-routing), NexusMind provides a stateful, interactive experience. The system's central concierge, **Nexa**, supports multi-hop reasoning, unified document indexing, and user-driven exploratory follow-ups.
+By unifying local inference engines (**Ollama: `qwen2.5-coder:7b**` via the canonical **`google.adk.models.lite_llm.LiteLlm`** abstraction for privacy, local embedding workflows, and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud** for deep analytical orchestration and dynamic tool-routing), NexusMind provides a stateful, interactive experience. The system's central concierge, **Nexa**, supports multi-hop reasoning, unified document indexing, and user-driven exploratory follow-ups.
 
 ---
 
@@ -10,7 +10,7 @@ By unifying local inference engines (**Ollama: `qwen2.5-coder:7b`** for privacy,
 
 ### 1.1 Macro-System Communication Subsystems
 
-The diagram below details the end-to-end transaction paths for raw document ingestion streams and runtime multi-agent retrieval loops.
+The diagram below details the decoupled transaction paths: a direct file processing lane for batch document ingestion and a defensive multi-agent retrieval loop handled by the backend gateway core.
 
 ```mermaid
 graph TD
@@ -25,20 +25,23 @@ graph TD
     classDef storage fill:#b2bec3,stroke:#dfe6e9,stroke-width:2px,color:#2d3436;
     classDef compute fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#fff;
 
-    %% Presentation Layer
-    UI[Streamlit UI & Interactive Chat]:::client <--> |Prompts & Cross-Questions| Gateway[SystemRootGateway Workflow]:::orchestrator
-    
-    %% Intent Splitting & Control
-    Gateway --> |Executes Scan| GuardrailNode[safety_guardrail_node]:::guardrail
-    GuardrailNode -.-> |Unsafe: BLOCKED_PATH| Refusal[handling_refusal_node]:::control
+    %% Presentation Layer / Data Entries
+    UI[Streamlit UI & Interactive Chat]:::client <--> |Active Chat Stream| BackendEngine[app/backend_engine.py]:::control
+    CLI[scripts/ingest.py CLI Tool]:::client --> |Direct File Arguments| DataFolder[data/ File Storage Directory]:::storage
+    UI -.-> |Saves binaries to disk| DataFolder
+
+    %% Conversational Core Road
+    BackendEngine <--> |Orchestrates Graph Turns| Gateway[SystemRootGateway Workflow]:::orchestrator
+    Gateway --> |Executes Scanning Loop| GuardrailAgent[GuardrailAgent]:::guardrail
+    GuardrailAgent -.-> |Unsafe Input Identified| Refusal[handling_refusal_node]:::control
     Refusal -.-> UI
 
-    GuardrailNode --> |Safe: SECURE_PATH| Concierge[CentralOrchestrator Agent]:::orchestrator
+    GuardrailAgent --> |Safe Input Verified| Router[ControlEngineRouter]:::orchestrator
+    Router --> |CHAT_PATH| FastAgent[FastConversationalAgent]:::agent
+    Router --> |RESEARCH_PATH| DeepResearch[DeepResearchPipeline Workflow]:::workflow
 
-    %% Central Orchestrator Tool Routing Decision Matrix
-    Concierge --> |Tool: FastConversationalAgent| FastAgent[Fast Agent]:::agent
-    Concierge --> |Tool: Ingestion-Pipeline| IngestFlow[Ingestion-Pipeline Workflow]:::workflow
-    Concierge --> |Tool: DeepResearchPipeline| DeepResearch[DeepResearchPipeline Workflow]:::workflow
+    %% Ingestion Lane Bypass (Decoupled & File-Driven)
+    DataFolder --> |process_file_ingestion Worker| IngestFlow[Ingestion-Pipeline Workflow]:::workflow
 
     %% Ingestion Pipeline 
     subgraph Ingestion_Pipeline ["Background PDF Ingestion Pipeline (app/ingest_pipeline.py)"]
@@ -77,50 +80,57 @@ graph TD
     Neo4j -.-> NTool
     Chroma -.-> CTool
 
-    %% Hybrid Compute Targets (Ollama + Gemini)
-    FastAgent & Parser & Chunker & EntityExt & RelExt & KGVal & Indexer & Planner & Retrieval & Fusion & Reasoner --> LocalOllama[Local Ollama: qwen2.5-coder:7b]:::compute
-    Concierge & Responder --> GeminiCloud[Gemini Cloud Engine]:::compute
+    %% Unified Compute Targets
+    FastAgent & GuardrailAgent & Router & Parser & Chunker & EntityExt & RelExt & KGVal & Indexer & Planner & Retrieval & Fusion & Reasoner --> LocalOllama[Local Ollama via LiteLlm wrapper]:::compute
+    DeepResearch & Responder --> GeminiCloud[Gemini Cloud Engine]:::compute
 
-    LocalOllama & GeminiCloud --> |Final Response Matrix| UI
 
 ```
 
 ### 1.2 System Runtime Interaction Loop
 
-The sequence diagram below displays the step-by-step transaction lifecycle of an execution turn through the system layers:
+The sequence diagram below displays the updated step-by-step transaction lifecycle of an execution turn through the decoupled system architecture:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Streamlit Client UI
+    actor User as Client Interface (UI or CLI)
+    participant DF as data/ Storage Directory
+    participant BE as app/backend_engine.py
     participant GW as SystemRootGateway (Workflow)
-    participant SG as safety_guardrail_node
-    participant CO as CentralOrchestrator (Gemini)
-    participant EX as Selected Worker (Agent/Workflow Tool)
-    participant INF as Infrastructure Service (Chroma/Neo4j)
+    participant GA as GuardrailAgent (Ollama)
+    participant CR as ControlEngineRouter (Ollama)
+    participant IP as Ingestion-Pipeline (Workflow)
+    participant INF as Database Clusters (Chroma/Neo4j)
 
-    User->>GW: Post Raw Text Input or File Payload Stream
-    GW->>SG: Run Defensive Safety Scan (via GuardrailAgent)
-    alt Security Refusal Triggered (BLOCKED)
-        SG-->>User: Short-Circuit Return Standard Security Policy Refusal Notice
-    else Input Clean (SECURE_PATH)
-        SG->>CO: Hand Off Control Matrix Payload
-        CO->>CO: Evaluate Intent & Select Matching Registered Tool
-        
-        alt Option A: Conversational Intent
-            CO->>EX: Delegate to FastConversationalAgent
-            EX-->>User: Return Quick Text Turn Response
-        else Option B: Document Ingestion Drop ('DOCUMENT_INJECT_STREAM:')
-            CO->>EX: Route to Ingestion-Pipeline Workflow
-            EX->>INF: Write Split Paragraph Chunks & Cypher Node Matrix
-            INF-->>EX: Database Commit Summary Acknowledgments
-            EX-->>User: Render Comprehensive Processing Report Status
-        else Option C: Heavy Complex Analytics
-            CO->>EX: Delegate to DeepResearchPipeline Workflow
-            EX->>INF: Execute Retrieval Tools (chroma_tool, neo4j_tool, web_tool)
-            INF-->>EX: Return Raw Semantic Context Fragments
-            EX->>EX: Perform Reciprocal Rank Fusion (RRF) & Multi-Hop Reasoning (CoT)
-            EX-->>User: Post Styled Report Markdown Answer + 3 Suggestion Pills
+    %% Flow 1: Decoupled File Ingestion
+    Note over User, IP: File Ingestion Path (Bypasses Chat Orchestrator Completely)
+    User->>DF: Stage Raw PDF Document Asset Binary on Disk
+    User->>BE: Invoke process_file_ingestion(file_name) Worker
+    BE->>IP: Parse Text Layout Stream & Initialize Ingestion-Pipeline Workflow
+    IP->>INF: Write Split Paragraph Chunks & Cypher Node Relation Matrices
+    INF-->>IP: Database Transaction Commit Summary Acknowledgments
+    IP-->>User: Return Clean Plain-Text Processing Report Metrics
+
+    %% Flow 2: Live Chat Runtime Interaction Turn
+    Note over User, INF: Conversational Interaction Path
+    User->>BE: Post Conversational Text Input String
+    BE->>GW: Dispatch Input to SystemRootGateway Workflow Execution
+    GW->>GA: Process Defensive Safety Scan Check
+    alt Security Exploit / Prompt Injection Identified
+        GA-->>User: Short-Circuit Return Standard Security Policy Refusal Notice
+    else Input Clean & Safe
+        GA->>CR: Hand Off Control Matrix Payload
+        CR->>CR: Evaluate Intent Conditions ('CASUAL_CHAT' vs 'RESEARCH')
+        alt Option A: Casual Conversational Turn
+            CR->>GW: Route to FastConversationalAgent (single_turn Node)
+            GW-->>User: Return Clean Approachable Response Text
+        else Option B: Multi-Hop Complex Analysis Request
+            CR->>GW: Delegate to DeepResearchPipeline Workflow
+            GW->>INF: Execute Retrieval Tools (chroma_tool, neo4j_tool, web_tool)
+            INF-->>GW: Yield Graph Entities & Semantic Text Context Fragments
+            GW->>GW: Execute Reciprocal Rank Fusion & Multi-Hop Reasoner Logic
+            GW-->>User: Render Comprehensive Markdown Answer Report + 3 Suggestion Pills
         end
     end
 
@@ -139,7 +149,7 @@ nexusmind-adk/                             # Root workspace repository
 ├── docker-compose.yaml                    # Local multi-container vector & graph database specs
 ├── main.py                                # Pre-flight hardware connectivity verification & diagnostics
 ├── run.sh                                 # Global environment check & runtime service execution gateway
-├── streamlit_app.py                       # Client interface dashboard and stream uploader layer
+├── streamlit_app.py                       # Client interface dashboard (Strictly UI Staging Copy Operations)
 ├── PLANNING.md                            # Blueprint, task items, and technical notes
 ├── LICENSE                                # Repository permission rights
 │
@@ -147,16 +157,24 @@ nexusmind-adk/                             # Root workspace repository
 │   ├── __init__.py                        # Config initiation block
 │   └── settings.py                        # Pydantic Settings environment loader and validator
 │
-├── app/                                   # Unified Core Logic Module Workspace
+├── data/                                  # Ingestion Landing Strip Directory (Isolated)
+│   └── rag_book.pdf                       # Target raw binary file copies prepared for parser pipelines
+│
+├── scripts/                               # Production Operational Shell Wrappers
+│   ├── __init__.py                        # Script pack exports
+│   └── ingest.py                          # Streamlined CLI module triggering file-driven ingest workers
+│
+├── app/                                   # Unified Core Backend Workspace Module
 │   ├── __init__.py                        # Package init exports
-│   ├── root_gateway.py                    # Top-level gateway graph orchestrator, safety proxy, and central hub
+│   ├── backend_engine.py                  # Core Engine (Manages Chat Sessions & process_file_ingestion)
+│   ├── root_gateway.py                    # Gateway orchestrator (Guardrail, Router, and Chat/Research paths)
 │   ├── research_pipeline.py               # 5-stage deep analytical reasoning workflow layout
 │   ├── ingest_pipeline.py                 # 6-stage background document parsing & graph ETL compiler
 │   ├── infrastructure.py                  # PyPDF extractors, Chroma HTTP clients, and Neo4j connection poolers
 │   ├── tools.py                           # Functional read/write database tool sets bridged to ADK wrappers
 │   └── states.py                          # Unified prompt instruction vault and structured Pydantic schemas
 │
-├── storage/                               # Persistent Storage Volumes
+├── storage/                               # Persistent Database Container Storage Volumes
 │   ├── chroma_data/                       # ChromaDB vector cluster storage directory
 │   ├── neo4j_data/                        # Neo4j Graph DBMS schema volumes
 │   ├── pg_data/                           # Regional database data mapping
@@ -173,9 +191,9 @@ nexusmind-adk/                             # Root workspace repository
 
 ### 3.1 Asynchronous Background Ingestion Pipeline
 
-Processes incoming files into high-fidelity context spaces across both storage engines simultaneously through 6 sequential steps:
+Processes incoming files into high-fidelity context spaces across both storage engines simultaneously through 6 sequential steps, triggered directly via `process_file_ingestion(file_name)`:
 
-1. **`PDFLayoutParserAgent`**: Unpacks layout byte streams and extracts clear, structured raw text.
+1. **`PDFLayoutParserAgent`**: Unpacks layout byte streams from the `data/` folder copy and extracts clear, structured raw text.
 2. **`SlidingWindowChunkerAgent`**: Partitions raw text into 500-character windows with a continuous 100-character overlapping tail to preserve context.
 3. **`EntityExtractorAgent`**: Parses isolated text fragments to extract structural categories (`SYSTEM`, `TECHNOLOGY`, `PERSON`).
 4. **`RelationExtractorAgent`**: Explores intersections between items to formulate connection predicates (`SCREAMING_SNAKE_CASE`).
@@ -237,14 +255,24 @@ NEO4J_PASSWORD="your_neo4j_password"
 
 ### 3. Spin Up Storage Containers
 
-Launch the core multi-container environment in background detached mode:
+Launch the core multi-container environment in background detached mode (persisted to `./storage/` layout specs):
 
 ```bash
 docker compose up -d
 
 ```
 
-### 4. Execute Complete Pre-Flight Environment Launch
+### 4. Direct CLI Data Ingestion Execution
+
+To ingest document resources directly via the command line interface without touching the chat application stack, execute your entry module by providing the target file location path:
+
+```bash
+# Ingest raw book files into your databases cleanly using your local tool environments
+uv run -m scripts.ingest data/rag_book.pdf
+
+```
+
+### 5. Execute Frontend Production Application Launch
 
 Use the automated orchestration script to test database availability and launch the application interface:
 
@@ -283,20 +311,21 @@ When the database portal splash screen prompts you, populate the login fields wi
 Once inside the running terminal interface worksheet box at the top, run these queries to monitor your database nodes:
 
 * **View the Entire Discovered Knowledge Graph Structure (Up to 300 items):**
+
 ```cypher
 MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 300;
 
 ```
 
-
 * **Count Total Nodes Extracted By Entity Classes:**
+
 ```cypher
 MATCH (n) RETURN n.label AS Type, count(n) AS Total Elements ORDER BY Total Elements DESC;
 
 ```
 
-
 * **Clear the Whole Sandbox DB to Restart Ingestion Anew:**
+
 ```cypher
 MATCH (n) DETACH DELETE n;
 

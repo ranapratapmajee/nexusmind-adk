@@ -10,7 +10,6 @@ from google.adk.models.lite_llm import LiteLlm
 from google.genai import types
 
 from app.research_pipeline import deep_research_subgraph
-from app.ingest_pipeline import ingest_workflow_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +45,7 @@ router_agent = Agent(
     
     Choose exactly one of these path keys based on context:
     - 'CASUAL_CHAT': General conversational openings, greetings, jokes, or pleasantries.
-    - 'INGESTION_UPLOAD': Requests containing data streams, indexing logs, file references, or drops.
     - 'RESEARCH': Complex multi-variable analytics, structural system deep-dives, or cross-database comparisons.
-    
-    SPECIAL CRITICAL RULE: If the input text context explicitly contains the string 'DOCUMENT_INJECT_STREAM:', you MUST output 'INGESTION_UPLOAD'.
     """,
     mode="chat" # <-- MUST be "chat" for the stateless runner
 )
@@ -154,14 +150,9 @@ async def cognitive_gateway_node(node_input: Any) -> Event:
     route_result = await _execute_agent_statelessly(router_agent, extracted_text)
     route_upper = route_result.upper()
 
-    if "INGESTION_UPLOAD" in route_upper:
-        logger.info("➡️ Delegate: Ingestion Pipeline")
-        return Event(route="INGESTION_PATH", output=node_input)
-        
-    elif "RESEARCH" in route_upper:
+    if "RESEARCH" in route_upper:
         logger.info("➡️ Delegate: Deep Research Pipeline")
         return Event(route="RESEARCH_PATH", output=node_input)
-        
     else:
         logger.info("➡️ Delegate: Fast Conversational Agent")
         return Event(route="CHAT_PATH", output=node_input)
@@ -182,7 +173,6 @@ root_agent = Workflow(
             cognitive_gateway_node, 
             {
                 "CHAT_PATH": fast_agent,
-                "INGESTION_PATH": ingest_workflow_pipeline,
                 "RESEARCH_PATH": deep_research_subgraph,
                 "BLOCKED_PATH": handling_refusal_node
             }
