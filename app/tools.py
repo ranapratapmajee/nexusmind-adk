@@ -1,4 +1,5 @@
 # filepath: app/tools.py
+import json
 import logging
 from typing import List, Dict, Any
 from config.settings import settings
@@ -6,51 +7,127 @@ from app.infrastructure import chroma_service, neo4j_service
 
 logger = logging.getLogger(__name__)
 
+def _ensure_list_of_dicts(data: Any) -> List[Dict[str, Any]]:
+    """Helper to defensively parse raw LLM inputs into clean lists of dictionaries."""
+    if not data:
+        return []
+    # If the LLM passed a raw JSON string block representing the whole array
+    if isinstance(data, str):
+        cleaned = data.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned.split("```json")[-1].split("```")[0].strip()
+        elif cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[-1].split("```")[0].strip()
+        try:
+            parsed = json.loads(cleaned)
+            return _ensure_list_of_dicts(parsed)
+        except Exception:
+            return []
+            
+    if isinstance(data, dict):
+        # Look for common nested keys like 'nodes', 'entities', 'edges'
+        for key in ["nodes", "entities", "edges", "relationships"]:
+            if key in data and isinstance(data[key], list):
+                return _ensure_list_of_dicts(data[key])
+        return [data]
+
+    if isinstance(data, list):
+        processed = []
+        for item in data:
+            if isinstance(item, str):
+                try:
+                    # Attempt to parse string elements if they are stringified json
+                    processed.append(json.loads(item))
+                except Exception:
+                    # Fallback structural dummy for raw string elements
+                    processed.append({"id": item, "label": "Concept", "properties": {"name": item}})
+            elif isinstance(item, dict):
+                processed.append(item)
+        return processed
+
+    return []
+
 # =========================================================
 # 1. DATABASE DATA COMMIT BROKERS (INGESTION PIPELINE)
 # =========================================================
 
-def chroma_write_tool(chunks: List[str], filename: str) -> int:
-    """Insert a list of raw split text strings straight into the Chroma vector store index."""
+def chroma_write_tool(chunks: Any, filename: str) -> int:
+    """Insert raw text chunks into the Chroma vector store index defensively."""
     written_count = 0
+    
+    # Handle cases where chunks are passed as a single string block or stringified JSON
+    if isinstance(chunks, str):
+        cleaned = chunks.strip()
+        if cleaned.startswith("[") and cleaned.endswith("]"):
+            try:
+                chunks = json.loads(cleaned)
+            except Exception:
+                chunks = [chunks]
+        else:
+            chunks = [c.strip() for c in chunks.split("\n\n") if c.strip()]
+            
+    if not isinstance(chunks, list):
+        chunks = [str(chunks)]
+
     for idx, chunk in enumerate(chunks):
+        # If it's a dictionary representing a chunk, pull out the text field
+        if isinstance(chunk, dict):
+            chunk_text = chunk.get("text") or chunk.get("content") or str(chunk)
+        else:
+            chunk_text = str(chunk)
+            
+        if not chunk_text.strip():
+            continue
+            
         try:
-            chroma_service.insert_chunk(chunk_text=chunk, document_name=filename, chunk_index=idx)
+            chroma_service.insert_chunk(chunk_text=chunk_text, document_name=filename, chunk_index=idx)
             written_count += 1
         except Exception as e:
             logger.error(f"Failed to index piece {idx} for {filename}: {str(e)}")
+            
     return written_count
 
-def neo4j_merge_tool(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> int:
-    """Commit verified graph structural records directly into Neo4j using Cypher MERGE commands."""
+def neo4j_merge_tool(nodes: Any, edges: Any) -> int:
+    """Commit verified graph records into Neo4j, automatically resolving raw LLM text strings."""
     mutations = 0
     
+    clean_nodes = _ensure_list_of_dicts(nodes)
+    clean_edges = _ensure_list_of_dicts(edges)
+    
+    logger.info(f"⚙️ Running defensive graph merge: Parsed {len(clean_nodes)} nodes and {len(clean_edges)} edges.")
+    
     # Commit Unique Labeled Nodes
-    for node in nodes:
+    for node in clean_nodes:
+        node_id = node.get("id") or node.get("name")
+        if not node_id:
+            continue
         try:
             neo4j_service.merge_entity_node(
-                node_id=node.get("id"),
-                label_type=node.get("label", "Concept"),
-                property_map=node.get("properties", {})
+                node_id=str(node_id),
+                label_type=node.get("label") or node.get("type") or "Concept",
+                property_map=node.get("properties") or {"name": str(node_id)}
             )
             mutations += 1
         except Exception as e:
-            logger.error(f"Node entry fail: {str(e)}")
+            logger.error(f"Node entry fail for '{node_id}': {str(e)}")
 
     # Commit Directional Relationships
-    for edge in edges:
+    for edge in clean_edges:
+        source_id = edge.get("source") or edge.get("from")
+        target_id = edge.get("target") or edge.get("to")
+        if not source_id or not target_id:
+            continue
         try:
             neo4j_service.merge_relationship_edge(
-                source_id=edge.get("source"),
-                target_id=edge.get("target"),
-                edge_type=edge.get("type", "RELATED_TO")
+                source_id=str(source_id),
+                target_id=str(target_id),
+                edge_type=edge.get("type") or edge.get("relationship") or "RELATED_TO"
             )
             mutations += 1
         except Exception as e:
-            logger.error(f"Edge entry fail: {str(e)}")
+            logger.error(f"Edge entry fail ({source_id} -> {target_id}): {str(e)}")
             
     return mutations
-
 
 # =========================================================
 # 2. CONTEXT RETRIEVAL TOOLSETS (RESEARCH PIPELINE)

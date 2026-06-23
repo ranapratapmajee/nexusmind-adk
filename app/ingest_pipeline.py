@@ -12,8 +12,17 @@ from app.tools import chroma_write_tool, neo4j_merge_tool # For ingestion
 
 logger = logging.getLogger(__name__)
 
-local_model = LiteLlm(model="ollama_chat/qwen2.5-coder:7b")
-llm = local_model
+# Initialize both runner configurations
+local_llm = LiteLlm(model=settings.OLLAMA_MODEL)
+cloud_llm = LiteLlm(model=settings.GEMINI_MODEL)
+
+# Dynamic allocation switch matrix
+if settings.EXECUTION_MODE.upper() == "CLOUD":
+    logger.info("☁️ System Engine utilizing CLOUD topology matrix (Gemini)")
+    llm = cloud_llm
+else:
+    logger.info("💻 System Engine utilizing LOCAL topology matrix (Ollama)")
+    llm = local_llm
 
 # =========================================================
 # 1. SPECIALIZED INGESTION AGENT NODES
@@ -57,8 +66,14 @@ kg_validator_agent = Agent(
     name="KgValidatorAgent",
     model=llm,
     description="Enforces strict schema compliance checks across node lists and edge maps.",
-    instruction="""Validate the graph data passed as input. Ensure every single structural edge connects 
-    a valid source and target ID present in the entities array. Drop any dangling or unmapped linkages.""",
+    instruction="""
+    Validate the graph data passed as input. Ensure every single structural edge connects 
+    a valid source and target ID present in the entities array. Drop any dangling or unmapped linkages.
+    
+    CRITICAL MANDATE: You must perform this sanitation entirely inline within your own context memory. 
+    Do NOT attempt to generate, call, or invoke any tools, functions, or external code blocks (such as 'validate_graph'). 
+    Output your final validated node and edge structure directly as a standard text/JSON data block payload.
+    """,
     mode="single_turn"
 )
 
@@ -66,9 +81,12 @@ indexer_agent = Agent(
     name="IndexerAgent",
     model=llm,
     description="Database commit broker deploying text fragments to Chroma and graph entities to Neo4j.",
-    instruction="""Commit the raw text chunks into Chroma DB using chroma_write_tool. 
-    Then, write the verified graph structure into Neo4j using neo4j_merge_tool.
-    Output a clear narrative summary detailing the number of vectors and graph nodes successfully committed.""",
+    instruction="""
+    You are the final database indexing node. You receive a structured JSON object containing verified 'entities' and 'edges' arrays from the preceding validator.
+    
+    CRITICAL INSTRUCTION: You MUST call 'neo4j_merge_tool' passing the 'entities' list as the 'nodes' argument, and the 'edges' list as the 'edges' argument. 
+    Do not skip this step. Do not write a conversational response until your tool calls have been generated and executed.
+    """,
     tools=[chroma_write_tool, neo4j_merge_tool],
     mode="single_turn"
 )

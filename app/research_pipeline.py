@@ -7,8 +7,17 @@ from app.tools import chroma_tool, neo4j_tool, web_tool # For research
 
 logger = logging.getLogger(__name__)
 
-local_model = LiteLlm(model="ollama_chat/qwen2.5-coder:7b")
-llm = local_model
+# Initialize both runner configurations
+local_llm = LiteLlm(model=settings.OLLAMA_MODEL)
+cloud_llm = LiteLlm(model=settings.GEMINI_MODEL)
+
+# Dynamic allocation switch matrix
+if settings.EXECUTION_MODE.upper() == "CLOUD":
+    logger.info("☁️ System Engine utilizing CLOUD topology matrix (Gemini)")
+    llm = cloud_llm
+else:
+    logger.info("💻 System Engine utilizing LOCAL topology matrix (Ollama)")
+    llm = local_llm
 
 # =========================================================
 # 1. SPECIALIZED RESEARCH AGENT NODES
@@ -55,7 +64,7 @@ reasoner_agent = Agent(
 
 response_agent = Agent(
     name="ResponseAgent",
-    model=settings.GEMINI_MODEL, 
+    model=llm, 
     description="Final output formatter generating clean markdown, source citations, and interactive cross-questions.",
     instruction="""Read the raw reasoning path and dense context compilation passed from the reasoner node.
     1. Draft a polished production-grade markdown answer complete with bracketed citation tracking.

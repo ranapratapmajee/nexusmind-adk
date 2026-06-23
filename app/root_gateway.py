@@ -13,8 +13,17 @@ from app.research_pipeline import deep_research_subgraph
 
 logger = logging.getLogger(__name__)
 
-local_model = LiteLlm(model="ollama_chat/qwen2.5-coder:7b")
-llm = local_model 
+# Initialize both runner configurations
+local_llm = LiteLlm(model=settings.OLLAMA_MODEL)
+cloud_llm = LiteLlm(model=settings.GEMINI_MODEL)
+
+# Dynamic allocation switch matrix
+if settings.EXECUTION_MODE.upper() == "CLOUD":
+    logger.info("☁️ System Engine utilizing CLOUD topology matrix (Gemini)")
+    llm = cloud_llm
+else:
+    logger.info("💻 System Engine utilizing LOCAL topology matrix (Ollama)")
+    llm = local_llm
 
 
 # =========================================================
