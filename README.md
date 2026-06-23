@@ -2,7 +2,7 @@
 
 NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK)** framework. The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads.
 
-By unifying local inference engines (**Ollama: `qwen2.5-coder:7b**` via the canonical **`google.adk.models.lite_llm.LiteLlm`** abstraction for privacy, local embedding workflows, and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud** for deep analytical orchestration and dynamic tool-routing), NexusMind provides a stateful, interactive experience. The system's central concierge, **Nexa**, supports multi-hop reasoning, unified document indexing, and user-driven exploratory follow-ups.
+By unifying local inference engines (**Ollama: `qwen2.5-coder:7b**` via the canonical **`google.adk.models.lite_llm.LiteLlm`** abstraction for privacy, local embedding workflows, and edge-speed calculations) with high-context cloud endpoints (**Gemini Cloud: `gemini/gemini-2.5-flash**` for deep analytical orchestration and dynamic tool-routing), NexusMind provides a stateful, interactive experience. The system's central concierge, **Nexa**, supports multi-hop reasoning, unified document indexing, and user-driven exploratory follow-ups.
 
 ---
 
@@ -88,7 +88,7 @@ graph TD
 
 ### 1.2 System Runtime Interaction Loop
 
-The sequence diagram below displays the updated step-by-step transaction lifecycle of an execution turn through the decoupled system architecture:
+The sequence diagram below displays the step-by-step transaction lifecycle of an execution turn through the decoupled system architecture:
 
 ```mermaid
 sequenceDiagram
@@ -97,8 +97,8 @@ sequenceDiagram
     participant DF as data/ Storage Directory
     participant BE as app/backend_engine.py
     participant GW as SystemRootGateway (Workflow)
-    participant GA as GuardrailAgent (Ollama)
-    participant CR as ControlEngineRouter (Ollama)
+    participant GA as GuardrailAgent (Ollama/Gemini)
+    participant CR as ControlEngineRouter (Ollama/Gemini)
     participant IP as Ingestion-Pipeline (Workflow)
     participant INF as Database Clusters (Chroma/Neo4j)
 
@@ -151,20 +151,23 @@ nexusmind-adk/                             # Root workspace repository
 ├── streamlit_app.py                       # Client interface dashboard (Strictly UI Staging Copy Operations)
 ├── PLANNING.md                            # Blueprint, task items, and technical notes
 ├── LICENSE                                # Repository permission rights
+├── nexusmind_runtime.log                  # Rolling backend operational tracking output trace
 │
 ├── config/                                # System Settings Subsystem
 │   ├── __init__.py                        # Config initiation block
-│   └── settings.py                        # Pydantic Settings environment loader and validator
+│   └── settings.py                        # Pydantic Settings environment loader, dotenv bootstrap injector
 │
 ├── data/                                  # Ingestion Landing Strip Directory (Isolated)
 │   └── rag_book.pdf                       # Target raw binary file copies prepared for parser pipelines
 │
 ├── scripts/                               # Production Operational Shell Wrappers
 │   ├── __init__.py                        # Script pack exports
-│   └── ingest.py                          # Streamlined CLI module triggering file-driven ingest workers
+│   ├── ingest.py                          # Streamlined CLI module triggering file-driven ingest workers
+│   └── test_connection.py                 # Network link sanity verification scripts
 │
 ├── app/                                   # Unified Core Backend Workspace Module
 │   ├── __init__.py                        # Package init exports
+│   ├── agent.py                           # Framework bridge file re-exporting root_agent for adk web UI
 │   ├── backend_engine.py                  # Core Engine (Manages Chat Sessions & process_file_ingestion)
 │   ├── root_gateway.py                    # Gateway orchestrator (Guardrail, Router, and Chat/Research paths)
 │   ├── research_pipeline.py               # 5-stage deep analytical reasoning workflow layout
@@ -173,20 +176,18 @@ nexusmind-adk/                             # Root workspace repository
 │   ├── tools.py                           # Functional read/write database tool sets bridged to ADK wrappers
 │   └── states.py                          # Unified prompt instruction vault and structured Pydantic schemas
 │
-├── storage/                               # Persistent Database Container Storage Volumes
-│   ├── chroma_data/                       # ChromaDB vector cluster data store volume files
-│   ├── pg_data/                           # Regional relational relational database mapping data
-│   ├── redis_data/                        # In-memory session tracking and cache logs
-│   └── neo4j_data/                        # Neo4j Graph DBMS Active Schema Files
-│       ├── databases/                     # Internal transactional graphs database mapping paths
-│       │   ├── neo4j/                     # Core default operational data store nodes
-│       │   └── system/                    # Database system catalog definitions
-│       └── transactions/                  # Uncommitted operational log structures
-│           ├── neo4j/                     # Runtime transactional queries logs
-│           └── system/                    # Framework metadata lifecycle commits
-│
-└── tests/                                 # Automated Quality Assurance Layer
-    └── __init__.py                        # Initialization module mapping for tests
+└── storage/                               # Persistent Database Container Storage Volumes
+    ├── chroma_data/                       # ChromaDB vector cluster data store volume files
+    ├── pg_data/                           # Regional relational relational database mapping data
+    ├── redis_data/                        # In-memory session tracking and cache logs
+    └── neo4j_data/                        # Neo4j Graph DBMS Active Schema Files
+        ├── dbms/                          # System security configurations (auth.ini)
+        ├── databases/                     # Internal transactional graphs database mapping paths
+        │   ├── neo4j/                     # Core default operational data store nodes
+        │   └── system/                    # Database system catalog definitions
+        └── transactions/                  # Uncommitted operational log structures
+            ├── neo4j/                     # Runtime transactional queries logs
+            └── system/                    # Framework metadata lifecycle commits
 
 ```
 
@@ -196,14 +197,29 @@ nexusmind-adk/                             # Root workspace repository
 
 ### 3.1 Asynchronous Background Ingestion Pipeline
 
-Processes incoming files into high-fidelity context spaces across both storage engines simultaneously through 6 sequential steps, triggered directly via `process_file_ingestion(file_name)`:
+Processes incoming files into high-fidelity context spaces across both storage engines simultaneously through 6 sequential steps, triggered directly via `process_file_ingestion(file_name)`.
+
+```mermaid
+graph LR
+    Start([data/file]) --> Parser[PDFLayoutParserAgent]
+    Parser --> Chunker[SlidingWindowChunkerAgent]
+    Chunker --> EntityExt[EntityExtractorAgent]
+    EntityExt --> RelExt[RelationExtractorAgent]
+    RelExt --> KGVal[KgValidatorAgent]
+    KGVal --> Indexer[IndexerAgent]
+    Indexer --> Chroma[(ChromaDB)]
+    Indexer --> Neo4j[(Neo4j Graph)]
+
+```
+
+#### Detailed Ingestion Chain:
 
 1. **`PDFLayoutParserAgent`**: Unpacks layout byte streams from the `data/` folder copy and extracts clear, structured raw text.
 2. **`SlidingWindowChunkerAgent`**: Partitions raw text into 500-character windows with a continuous 100-character overlapping tail to preserve context.
 3. **`EntityExtractorAgent`**: Parses isolated text fragments to extract structural categories (`SYSTEM`, `TECHNOLOGY`, `PERSON`).
 4. **`RelationExtractorAgent`**: Explores intersections between items to formulate connection predicates (`SCREAMING_SNAKE_CASE`).
-5. **`KgValidatorAgent`**: Sanitizes the graph matrix by purging broken nodes or dangling connection lineages.
-6. **`IndexerAgent`**: Interacts with the data write tools (`chroma_write_tool` and `neo4j_merge_tool`) to save components to disk.
+5. **`KgValidatorAgent`**: Sanitizes the graph matrix entirely inline within its context memory to eliminate hallucinated function calls (such as calling imaginary `validate_graph` tool nodes), purging broken links or dangling connection lineages.
+6. **`IndexerAgent`**: Database commit broker deploying text fragments to Chroma via `chroma_write_tool` and graph nodes/edges to Neo4j via `neo4j_merge_tool`.
 
 ### 3.2 Dynamic Retrieval & Multi-Hop Reasoning Pipeline
 
@@ -240,15 +256,22 @@ uv sync
 
 ### 2. Configure Environment Secrets
 
-Ensure a `.env` file exists in your project's root directory containing these configurations:
+Ensure a `.env` file exists in your project's root directory containing these configurations. The `EXECUTION_MODE` parameter acts as a global switch enabling instant swapping between hardware targets:
 
 ```bash
-# Model Specific Target Assignments
-LOCAL_LLM_URL="http://localhost:11434"
-OLLAMA_MODEL="qwen2.5-coder:7b"
-GEMINI_MODEL="gemini-2.5-flash"
+# --- Orchestration Controller Switch ---
+# Options: LOCAL (Ollama Local Graph) or CLOUD (Gemini Cloud Studio Graph)
+EXECUTION_MODE="LOCAL"
 
-# Database Connection Infrastructure
+# --- Model Provider Endpoints ---
+GEMINI_API_KEY="your_google_ai_studio_api_key"
+LOCAL_LLM_URL="http://localhost:11434"
+
+# --- Model Specific Assignments ---
+OLLAMA_MODEL="qwen2.5-coder:7b"
+GEMINI_MODEL="gemini/gemini-2.5-flash"  # Explicit provider prefix avoids Vertex auth crashes
+
+# --- Database Cluster Topology ---
 CHROMA_HOST="localhost"
 CHROMA_PORT=8000
 
@@ -292,7 +315,34 @@ chmod +x run.sh
 
 ---
 
-## 5. 🌐 Visualizing Your Knowledge Graph in Neo4j Browser
+## 5. 🔍 Observability & Agent Tracing with `adk web`
+
+The Google ADK features a built-in local developer dashboard interface designed to view execution flows, monitor prompt token metrics, visualize workflow states, and inspect runtime multi-agent token generations in real time.
+
+### Step 1: Initialize the Telemetry Engine
+
+The server uses structural introspection conventions to load your topology mapping. Thanks to the `app/agent.py` re-export bridge layout, you can execute this shortcut directly from the workspace root:
+
+```bash
+uv run adk web
+
+```
+
+### Step 2: Access the Visual Trace Stack
+
+Open your web browser and navigate to the developer server instance panel:
+
+> **URL:** `http://localhost:8000`
+
+### Step 3: Diagnostic Insights Provided
+
+* **Trace Timeline Tab**: Track exactly which edges fired inside the `SystemRootGateway` graph matrix (e.g., watching a transaction hop smoothly from `ControlEngineRouter` to `FastConversationalAgent`).
+* **System Instructions Swap Audit**: Inspect the `systemInstructionChanged` flags to confirm that prompts are cleanly re-allocated as intents shift, entirely isolating execution memory states.
+* **Token Usage Metrics Table**: Track prompt tokens count, completion counts, and invocation IDs to pinpoint performance blockages on the fly.
+
+---
+
+## 6. 🌐 Visualizing Your Knowledge Graph in Neo4j Browser
 
 To visually inspect the extracted graph structures and entities processed by your `Ingestion-Pipeline`, follow this quick verification guide.
 
@@ -309,11 +359,11 @@ When the database portal splash screen prompts you, populate the login fields wi
 * **Connection URL:** `bolt://localhost:7687`
 * **Authentication Type:** `Username / Password`
 * **Username:** `neo4j`
-* **Password:** `********`
+* **Password:** `your_neo4j_password`
 
-### Step 3: Useful Cypher Investigative Queries
+### Step 3: Advanced Cypher Investigative Workbook
 
-Once inside the running terminal interface worksheet box at the top, run these queries to monitor your database nodes:
+Once inside the running terminal interface worksheet box at the top, use these tailored queries to verify data persistence:
 
 * **View the Entire Discovered Knowledge Graph Structure (Up to 300 items):**
 
@@ -322,10 +372,20 @@ MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 300;
 
 ```
 
-* **Count Total Nodes Extracted By Entity Classes:**
+* **Inspect Extracted Graph Records Filtered by LLM Type Groupings:**
+Because `app/tools.py` features defensive schema wrappers parsing dynamic node mappings (`Technology`, `Feature`, `Component`, `Tool`, `Library`), you can group counts without knowing labels in advance:
 
 ```cypher
-MATCH (n) RETURN n.label AS Type, count(n) AS Total Elements ORDER BY Total Elements DESC;
+MATCH (n) RETURN labels(n) AS ExtractedLabels, count(n) AS EntityCount;
+
+```
+
+* **Query Specific Inter-Entity Connections Across Systems:**
+
+```cypher
+MATCH (source)-[r]->(target) 
+RETURN source.id AS From, type(r) AS Relationship, target.id AS To 
+LIMIT 50;
 
 ```
 
