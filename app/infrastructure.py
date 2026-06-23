@@ -1,6 +1,7 @@
 # filepath: app/infrastructure.py
 import io
 import logging
+from typing import List, Dict, Any
 import requests
 from pypdf import PdfReader
 from chromadb import HttpClient
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 # =========================================================
 
 class PDFExtractor:
-    """Extracts raw text strings from byte buffers."""
+    """Extracts raw text strings from byte buffers and provides native chunking."""
     
     @staticmethod
     def extract_clean_text(file_bytes: bytes) -> str:
@@ -37,6 +38,56 @@ class PDFExtractor:
             logger.error(f"❌ Failed to extract text from PDF data stream: {str(e)}")
             raise RuntimeError(f"PDF extraction error: {str(e)}")
 
+    @staticmethod
+    def slice_hierarchical_chunks(text: str, parent_size: int = 2000, child_size: int = 400, overlap: int = 100) -> List[Dict[str, Any]]:
+        """
+        ⚡ PRE-FLIGHT TIMEOUT FIX: Programmatically windows text strings on the CPU.
+        Returns a structured hierarchical map of Parent chunks containing overlapping Child slices.
+        """
+        print(f"⚙️ [NATIVE CHUNKER] Programmatically slicing text into parent/child boundaries...")
+        hierarchical_map = []
+        
+        # 1. Split text into large parent chunks based on size boundaries
+        start_idx = 0
+        parent_index = 1
+        child_global_index = 1
+        
+        while start_idx < len(text):
+            end_idx = min(start_idx + parent_size, len(text))
+            parent_chunk = text[start_idx:end_idx].strip()
+            
+            if parent_chunk:
+                child_chunks = []
+                # 2. Slice this parent chunk into smaller overlapping child chunks
+                child_start = 0
+                while child_start < len(parent_chunk):
+                    child_end = min(child_start + child_size, len(parent_chunk))
+                    child_text = parent_chunk[child_start:child_end].strip()
+                    
+                    if child_text:
+                        child_chunks.append({
+                            "id": child_global_index,
+                            "text": child_text
+                        })
+                        child_global_index += 1
+                        
+                    # Advance child by chunk size minus overlap
+                    child_start += (child_size - overlap)
+                    if child_end == len(parent_chunk):
+                        break
+                        
+                hierarchical_map.append({
+                    "parent_index": parent_index,
+                    "parent_chunk": parent_chunk,
+                    "child_chunks": child_chunks
+                })
+                parent_index += 1
+                
+            start_idx += parent_size
+            
+        print(f"   └── ✅ [CHUNKER COMPLETE] Generated {len(hierarchical_map)} Parent contexts and {child_global_index - 1} Child sub-chunks.")
+        return hierarchical_map
+
 pdf_extractor = PDFExtractor()
 
 
@@ -50,20 +101,20 @@ class ChromaService:
     def __init__(self):
         self.client = HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
         self.embedding_url = f"{settings.LOCAL_LLM_URL}/api/embeddings"
-        self.model_name = "nomic-embed-text"
+        self.model_name = settings.EMBEDDING_MODEL
         
     def _generate_embedding(self, text_content: str) -> list[float]:
-        """Queries local Ollama endpoint to return dense vector representations."""
+        """Queries local Ollama endpoint to return dense vector representations using Nomic."""
         try:
             response = requests.post(
                 self.embedding_url,
                 json={"model": self.model_name, "prompt": text_content},
-                timeout=10
+                timeout=15
             )
             response.raise_for_status()
             return response.json().get("embedding", [])
         except Exception as e:
-            logger.error(f"❌ Failed to extract dense embeddings from Ollama: {str(e)}")
+            logger.error(f"❌ Failed to extract dense embeddings from Ollama model '{self.model_name}': {str(e)}")
             raise e
 
     def get_or_create_collection(self, collection_name: str = "nexus_knowledge_pool"):
@@ -152,4 +203,3 @@ class Neo4jService:
             logger.info(f"🔗 Merged Graph Edge: ({source_id})-[:{safe_type}]->({target_id})")
 
 neo4j_service = Neo4jService()
-

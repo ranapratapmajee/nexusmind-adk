@@ -1,125 +1,274 @@
-# Architecture Blueprint: Cognitive GraphRAG System
-
-## 1. Advanced Data Ingestion & Chunking Strategy
-
-To handle large documents effectively, we avoid naive chunking (which cuts off sentences and strips background context). Instead, we use a **Hierarchical Parent-Child Splitting** model combined with **Semantic Layout Stitching**.
-
-### The Mechanism
-
-1. **Document-Level Processing:** Calculate an immutable SHA-256 hash of the PDF to prevent duplicate ingestion loops.
-2. **Parent Chunking:** Split the raw document text into large semantic sections (e.g., $2000$ characters) matching physical layout markers like chapter or section sub-headers.
-3. **Child Sub-Chunking:** Divide each parent block into smaller, highly dense child sub-chunks (e.g., $400$ characters, $100$ character overlap).
-4. **Vector vs. Graph Indexing:**
-* **Chroma DB:** Stores *only* the **Child Sub-Chunks** as high-dimensional vectors to optimize specific semantic similarity matching.
-* **Neo4j Graph Database:** Stores the structural **Parent Chunks** as physical nodes alongside domain entities and reified interactions.
-* **The Provenance Anchor:** Every child sub-chunk maintains an explicit pointer link directly upstream to its structural parent node in the graph.
-
-
+# 🏛️ Production Architecture Specification: NexusMind GraphRAG
+**Version:** 2.5 (Core Production Baseline)  
+**Execution Environment:** Hybrid Local Edge Core (`nomic-embed-text` + Local 7B LLM Engine)  
+**Framework Topology:** Google ADK 2.3 Async Event-Driven Execution Engine
 
 ---
 
-## 2. Dual-Layer Cognitive Knowledge Graph Schema
+## 1. Architectural Design Theory & Strategic Advantage
 
-Inside Neo4j, data is organized into a hybrid schema containing two independent layers that map real-world conceptual flow back to physical document positions.
+Standard GraphRAG pipelines struggle with **Unstructured Context Overload** when deployed on local hardware. Forcing a local Large Language Model (LLM) to parse massive text blocks, compute token coordinates, split text, and output valid JSON maps simultaneously causes severe processing overhead, leading to **Hard Read Timeouts (`httpx.ReadTimeout`)**.
 
-```
-[ Domain Knowledge Layer ]
-  (:Component) ────[:DEPENDS_ON]────► (:Architecture)
-        │                                   │
-   [:SUBJECT]                          [:OBJECT]
-        ▼                                   ▼
-  (i:Interaction {id: "claim_102", description: "caveats"})
-        │
-   [:PROVENANCE_OF]
-        ▼
-[ Provenance & Structural Tracking Layer ]
-  (:ParentChunk {id: "parent_5"}) ◄───[:CHILD_OF]─── (:ChildChunk {id: "chroma_id_9"})
+NexusMind solves this issue using a **Decoupled Asymmetric Execution** pattern:
+1. **Structural Text Splitting** is offloaded from the AI layer to native Python string slicing loops running on the **CPU**, where it executes instantly.
+2. The **Local Model** is used exclusively for domain entity mining, schema-constrained parsing, and multi-hop reasoning over tiny, pre-cut text blocks.
+
 
 ```
 
-### Layer A: Domain Knowledge & Reified Claims
+```
+                  ┌──────────────────────────────────────────┐
+                  │          Source Document (PDF)           │
+                  └────────────────────┬─────────────────────┘
+                                       │  [PyPDF Byte Read]
+                                       ▼
+                  ┌──────────────────────────────────────────┐
+                  │       Programmatic Python Extractor      │
+                  │   (Natively handles text extraction)     │
+                  └────────────────────┬─────────────────────┘
+                                       │  [Pure Text Stream String]
+                                       ▼
+                  ┌──────────────────────────────────────────┐
+                  │       Programmatic CPU Chunker           │
+                  │  (Deterministic Window Partitioning)     │
+                  └────────────┬───────────────────────┬─────┘
+                               │                       │
+                               ▼ [Parent Windows]      ▼ [Child Windows]
+                  ┌────────────────────────┐  ┌────────────────────────┐
+                  │  Parent Chunks (~2000c)│  │   Child Chunks (~400c) │
+                  │  [Passed to Graph LLM] │  │  [Passed to Embedder]  │
+                  └────────────┬───────────┘  └────────────┬───────────┘
+                               │                           │
+                               ▼ [Iterative Payload]       ▼ [Matrix Generation]
+                  ┌────────────────────────┐  ┌────────────────────────┐
+                  │   Google ADK Pipeline  │  │   Ollama Local Nodes   │
+                  │  (Entity/Edge Mining)  │  │  (nomic-embed-text)    │
+                  └────────────┬───────────┘  └────────────┬───────────┘
+                               │                           │
+                               ▼ [Cypher MERGE Txs]        ▼ [HTTP Payload Add]
+                  ┌────────────────────────┐  ┌────────────────────────┐
+                  │   Neo4j Graph Cluster  │  │  ChromaDB Vector Pool  │
+                  │  (Reified Claims/Nodes)│  │  (768-Dim Coordinates) │
+                  └────────────────────────┘  └────────────────────────┘
 
-* **Concept Nodes:** `(:Component)`, `(:Architecture)`, `(:Constraint)`, `(:Metric)`. Nodes hold deep internal property maps such as definitions, expected parameters, and known failure conditions.
-* **Reified Claims (`:Interaction` Nodes):** Instead of simple lines, relationships themselves become independent entity nodes holding precise operational metrics and conditional assertions.
+```
 
-### Layer B: Provenance Tracking
-
-* **Parent Chunk Nodes:** `(:ParentChunk {id: "hash-p_index", text: "..."})`
-* **Child Tracking Tokens:** `(:ChildChunk {id: "hash-child-c_index"})`
-* **Structural Pointers:** * `(:ChildChunk)-[:CHILD_OF]->(:ParentChunk)`
-* `(:Concept)-[:MENTIONED_IN]->(:ParentChunk)`
-* `(:Interaction)-[:PROVENANCE_OF]->(:ParentChunk)`
-
-
+```
 
 ---
 
-## 3. The Multi-Stage Retrieval & Expansion Funnel
+## 2. Ingestion Domain Specification (Data Ingestion Pipeline)
 
-When a user executes an inquiry, the retrieval tool doesn't just do a single database lookup. It runs an intelligent, interleaved **Gathering Loop**:
+The data ingestion engine transforms unstructured document strings into synchronized database representations with clear provenance trails.
+
+### 2.1 Native Programmatic Layout Chunking (CPU-Bound Heuristics)
+Instead of relying on prompt-driven AI splitting, `PDFExtractor.slice_hierarchical_chunks()` applies strict programmatic text windowing:
+* **Parent Context Windows:** The raw document string is parsed sequentially into large, non-overlapping **Parent context chunks** capped at **2,000 characters**.
+* **Child Overlap Sub-Slicing:** Each parent chunk is subdivided into smaller **Child sub-chunks** capped at **400 characters**, enforcing a **100-character overlap** with adjacent fragments to preserve semantic edge boundaries.
+
+### 2.2 Vector Alignment Mechanics
+* **Target Model Allocation:** Local vectorizations are generated exclusively by the local **`nomic-embed-text`** model running via Ollama's `/api/embeddings` endpoint.
+* **Spatial Geometry Array:** Text contents are converted into mathematical coordinates with a structural dimensionality of **768 parameters**, then committed to a persistent local **ChromaDB Collection** using an `HttpClient` transport layer.
+
+### 2.3 Dual-Layer Knowledge Graph Topology (Neo4j Schema Design)
+Inside Neo4j, data is organized into a hybrid schema containing two independent layers that map real-world conceptual flows back to physical document positions.
+
 
 ```
-[ User Query ] ──► (Stage 1: Vector Proximity Sweep) ──► Target Child Chunk IDs
-                                                                  │
-                                                                  ▼
- (Stage 3: Parent Context Extraction) ◄── (Stage 2: Graph Flow Expansion)
-            │
-            ▼
- (Stage 4: Dynamic Context Gatekeeper Agent Evaluation)
-            ├──► Context Complete ──► [ KnowledgeFusionAgent ]
-            └──► Context Sparse   ──► [ web_search ] ──► Combined Data
+
+[ Layer A: Domain Knowledge Layer ]
+(:Component) ────[:DEPENDS_ON]────► (:Architecture)
+│                                   │
+[:SUBJECT]                          [:OBJECT]
+▼                                   ▼
+(i:Interaction {id: "claim_slug", interaction_type: "DEPENDS_ON"})
+│
+[:PROVENANCE_OF]
+▼
+[ Layer B: Provenance & Structural Tracking Layer ]
+(:Entity {id: "parent_chunk_id"}) ◄───[:MENTIONED_IN]─── (:Entity {id: "chroma_id", label: "ChildChunk"})
 
 ```
 
-* **Stage 1: Vector Proximity Sweep (`chroma_search`)**
-The user query executes a similarity pass across Chroma to grab the top 3 nearest-neighbor **Child Sub-Chunks**.
-* **Stage 2: Graph Flow Expansion (`neo4j_traverse`)**
-The tool extracts the IDs of the retrieved child sub-chunks and moves to Neo4j. It climbs up the `[:CHILD_OF]` edge to find the structural parent nodes. It then expands outward by 1–2 hops across all connected `(:Concept)` and `(:Interaction)` claim paths to map out the functional flow of information.
-* **Stage 3: Parent Context Extraction (`chroma_fetch`)**
-The system pulls the full text block from the discovered `ParentChunk` nodes. This brings in background context, equations, and neighboring sentences that a regular vector search would miss.
+#### Layer A: Domain Knowledge & Reified Claims
+* **Concept Nodes:** `(:Component)`, `(:Architecture)`, `(:Constraint)`, `(:Metric)`. Nodes contain definitions, parameters, and known failure conditions.
+* **Reified Claims (`:Interaction` Nodes):** Relationships are treated as distinct structural nodes holding precise operational metadata and conditional properties rather than empty lines.
+
+#### Layer B: Provenance Tracking
+* **Child Tracking Tokens:** Marked explicitly as `(c:Entity {id: $chunk_id, label: 'ChildChunk'})`.
+* **Grounded Provenance Cypher Queries:**
+  ```cypher
+  // Merging a Concept Node & Binding Provenance Anchor
+  MERGE (c:Entity {id: $chunk_id}) SET c.label = 'ChildChunk'
+  WITH c MATCH (e {id: $name}) MERGE (e)-[:MENTIONED_IN]->(c)
+
+```
+
+```cypher
+// Merging a Reified Interaction Claim & Building Structural Links
+MATCH (s {id: $source}) MATCH (t {id: $target}) MATCH (i {id: $claim_id})
+MERGE (c:Entity {id: $chunk_id}) SET c.label = 'ChildChunk'
+MERGE (s)-[:SUBJECT]->(i) MERGE (i)-[:OBJECT]->(t) MERGE (i)-[:PROVENANCE_OF]->(c)
+
+```
 
 ---
 
-## 4. The Context Gatekeeper Agent & Refactored Subgraph
+## 3. Ingestion Multi-Agent Orchestration Blueprint
 
-To resolve instances where local databases contain gaps, we insert a specialized **Context Gatekeeper Agent** directly into the research workflow pipeline.
-
-### Updated Graph Topology Nodes
+The ingestion process runs through an automated pipeline managed by the Google ADK runner. Rather than sending the entire document into the pipeline as a single block, the engine loops through each pre-cut parent context window one frame at a time.
 
 ```
-("START") ──► [PlannerAgent] ──► [RetrievalAgent] ──► [ContextGatekeeperAgent]
-                                                               │
-                                         ┌─────────────────────┴─────────────────────┐
-                                         ▼ (Sufficient)                              ▼ (Sparse Context)
-                                [KnowledgeFusionAgent]                         [WebSearchTool]
-                                         │                                           │
-                                         └─────────────────────┬─────────────────────┘
-                                                               ▼
-                                                       [KnowledgeFusionAgent]
-                                                               │
-                                                       [ReasonerAgent]
-                                                               │
-                                                       [ResponseAgent]
+┌────────────────────────────────────────────────────────────────────────┐
+│                      NexusIngestionFlowEngine                          │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                [Iterates over each Parent/Child chunk block]
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                         Payload Package JSON                           │
+│  { "parent_context_stream": "...", "child_fragments_to_index": [...] } │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+                       =========================
+                       Google ADK Pipeline Steps
+                       =========================
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        EntityExtractorAgent                            │
+│           Outputs: {"entities": [{"name": "X", "type": "Y"}]}          │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                       RelationExtractorAgent                           │
+│           Outputs: {"edges": [{"source": "A", "target": "B"}]}          │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                          KgValidatorAgent                              │
+│       Cross-references arrays, resolves syntax, builds schema          │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                            IndexerAgent                                │
+│          Executes tools: chroma_write, neo4j_merge_node/claim          │
+└────────────────────────────────────────────────────────────────────────┘
 
 ```
-
-### The Agent Execution Flow
-
-1. **`PlannerAgent` (The Blueprint Architect):** Sets up explicit search boundaries optimized for our parent-child graph layout.
-2. **`RetrievalAgent` (The Gatherer):** Runs the multi-stage database loop (`chroma_search` -> `neo4j_traverse` -> `chroma_fetch`), collecting the raw parent text blocks and semantic graph paths.
-3. **`ContextGatekeeperAgent` (The Evaluator - *NEW*):** Inspects the raw data block gathered by the retrieval node against the user's initial question. It evaluates clarity and completeness.
-* *Verdict -> SUFFICIENT:* Routes the context data directly to the fusion agent.
-* *Verdict -> INSUFFICIENT:* Dynamically executes `web_search` to scrape missing real-time internet context, merges the web data with the database records, and forwards the complete package.
-
-
-4. **`KnowledgeFusionAgent` (The De-duplicator):** Deduplicates, ranks, and structures the combined text block.
-5. **`ReasonerAgent` (The Logic Core):** Executes step-by-step Chain-of-Thought deduction over the complete text payload to trace entity connections.
-6. **`ResponseAgent` (The Final Writer):** Outputs the final answer in structured markdown with strict, inline bracketed source citations.
 
 ---
 
-## 🛠️ Implementation Phasing
+## 4. Runtime Cognitive Routing & Retrieval Specification
 
-1. **`app/tools.py`:** Create the atomic tools to handle the parent-child chunk routing and the new context fallback parameters.
-2. **`app/ingest_pipeline.py`:** Update your 6-stage ingestion agents to extract parent nodes, child nodes, and interaction attributes.
-3. **`app/research_pipeline.py`:** Integrate the `ContextGatekeeperAgent` into the graph logic structure.
+The runtime user interface is powered by the **`SystemRootGateway` Orchestration Subgraph**, which dynamically routes incoming queries through an intelligent retrieval funnel.
+
+```
+                              ┌──────────────────┐
+                              │  User Query (In) │
+                              └────────┬─────────┘
+                                       │
+                                       ▼
+                              ┌──────────────────┐
+                              │    RootAgent     │
+                              │(Context Rewriter)│
+                              └────────┬─────────┘
+                                       │
+                                       ▼
+                              ┌──────────────────┐
+                              │   RouterAgent    │
+                              │(Intent Classifier│
+                              └────────┬─────────┘
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    ▼                                     ▼
+             [ CASUAL_CHAT ]                         [ RESEARCH ]
+                    │                                     │
+                    ▼                                     ▼
+      ┌───────────────────────────┐         ┌───────────────────────────┐
+      │  FastConversationalAgent  │         │   DeepResearchPipeline    │
+      │  (Low-Latency Speed Run)  │         │  (Multi-Stage Retrieval)  │
+      └───────────────────────────┘         └─────────────┬─────────────┘
+                                                          │
+                    ┌─────────────────────────────────────┴─────────────────────────────────────┐
+                    ▼                                     ▼                                     ▼
+         ┌─────────────────────┐               ┌─────────────────────┐               ┌─────────────────────┐
+         │     Stage 1:        │               │     Stage 2:        │               │     Stage 3:        │
+         │   Chroma Search     │ ────────────> │   Neo4j Traverse    │ ────────────> │    Chroma Fetch     │
+         │  (Vector similarity)│               │  (Multi-hop pathing)│               │ (Target text pull)  │
+         └─────────────────────┘               └─────────────────────┘               └─────────────────────┘
+                                                                                                │
+                                                                                                ▼
+                                                                                     ┌─────────────────────┐
+                                                                                     │    Final Answer     │
+                                                                                     │  Generation Output  │
+                                                                                     └─────────────────────┘
+
+```
+
+### 4.1 System Gateway Core
+
+* **`RootAgent` (Context Rewriter):** Reviews multi-turn chat histories and condenses inputs into clear standalone questions, caching the result to `invocation_context.state["resolved_query"]`.
+* **`ControlEngineRouter` (Intent Classifier):** Categorizes queries into `CASUAL_CHAT` (processed by `FastConversationalAgent`) or `RESEARCH` (forwarded to the `DeepResearchPipeline`).
+
+### 4.2 Multi-Stage Hybrid Retrieval Funnel Heuristics
+
+When a query moves into the **`DeepResearchPipeline`**, the system executes a coordinated search across both databases:
+
+* **Stage 1: Vector Proximity Sweep (`chroma_search`):** Runs a semantic lookup across your text embedding index to grab the top 3 high-probability Child chunk IDs.
+* **Stage 2: Graph Flow Expansion (`neo4j_traverse`):** Traces retrieved Child IDs up to their Parent nodes, expanding outward by 1–2 hops to map out connected components, attributes, and reified interactions (`origin_element`, `relationship_path`, `connected_target`).
+* **Stage 3: Parent Context Extraction (`chroma_fetch`):** Pulls the full text blocks from the discovered `ParentChunk` nodes to reconstruct comprehensive background details.
+* **Stage 4: Context Gatekeeper Agent Evaluation (`gatekeeper_agent`):** Evaluates if the gathered context contains enough detailed facts to comprehensively answer the user's query:
+* *Verdict -> SUFFICIENT:* Routes data directly to the `KnowledgeFusionAgent`.
+* *Verdict -> INSUFFICIENT:* Dynamically executes `web_search` to scrape missing context, merges it with the database records, and forwards the complete package.
+
+
+* **Stage 5 & 6 (Fusion & Reasoner):** Deduplicates context streams, builds step-by-step logic trails, and passes the package to `ResponseAgent` to write a final answer with strict inline source citations.
+
+---
+
+## 5. System Configuration & Maintenance Standard
+
+### 5.1 System Portals File Config (`.env`)
+
+```bash
+EXECUTION_MODE="LOCAL"
+LOCAL_LLM_URL="http://localhost:11434"
+OLLAMA_MODEL="qwen2.5-coder:7b"
+EMBEDDING_MODEL="nomic-embed-text"
+
+CHROMA_HOST="localhost"
+CHROMA_PORT=8000
+
+NEO4J_URI="bolt://localhost:7687"
+NEO4J_USER="neo4j"
+NEO4J_PASSWORD="your_secure_password"
+
+```
+
+### 5.2 Database Maintenance Commands
+
+To clear old entries and safely reset your database dimensions, run these cleanup tasks before starting a new file ingestion loop:
+
+#### Reset Neo4j Database State:
+
+```cypher
+MATCH (n) DETACH DELETE n;
+
+```
+
+#### Clear ChromaDB Collection Cache (via Python CLI):
+
+```python
+from app.infrastructure import chroma_service
+collection = chroma_service.get_or_create_collection()
+collection.delete()
+
+```
+
+```
+---

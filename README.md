@@ -2,27 +2,31 @@
 
 NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK)** framework. 
 
-The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads. It introduces an advanced **Hierarchical Parent-Child Splitting** model to handle large-scale PDFs and structures a dynamic **Context Gatekeeper Agent** to eliminate data invisibility by selectively managing live internet fallback logic.
+The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads. It introduces a high-performance **Programmatic CPU Parent-Child Chunking Engine** to bypass local model latency barriers and handles large manuals cleanly. It structures a dynamic **Context Gatekeeper Agent** to eliminate data gaps by managing live internet fallback logic natively.
 
 ---
 
 ## 🗺️ 1. Master System Architecture & Pipeline Diagrams
 
-NexusMind completely replaces monolithic database lookups with a highly fine-grained, modular ecosystem. The system separates the operational layers into an **Asynchronous Batch Ingestion Pipeline** and an **Interleaved Multi-Stage Research Loop**.
+NexusMind replaces monolithic database lookups with a modular ecosystem. The platform separates its operational layers into a high-speed, programmatic **Asynchronous Batch Ingestion Pipeline** and an **Interleaved Multi-Stage Research Loop**.
+
+
 
 ```text
                                 [ PDF Document File Asset ]
                                              │
                                              ▼
-                             [ Enriched Hierarchical Splitting ]
+                             [ Programmatic CPU Chunk Engine ]
+                                (Instant Window Partitioning)
                                              │
                       ┌──────────────────────┴──────────────────────┐
                       ▼                                             ▼
-       [ Child Sub-Chunk Arrays ]                      [ Parent Header Chunks ]
+       [ Child Sub-Chunk Arrays ]                      [ Parent Context Chunks ]
+        (400 chars / 100 overlap)                          (2000 character blocks)
               │                                             │
               ▼                                             ▼
        ( Chroma Vector DB )                         ( Neo4j Knowledge Graph )
-                                                      ├── Domain Knowledge Layer
+        └─ nomic-embed-text                           ├── Domain Knowledge Layer
                                                       ├── Semantic Claim Layer
                                                       └── Provenance Anchor Layer
 
@@ -30,7 +34,7 @@ NexusMind completely replaces monolithic database lookups with a highly fine-gra
 
 ### 1.1 Live Chat Interaction Turn & Execution Flow
 
-Every frontend conversational request follows a strict supervisor-routing loop. The diagram below maps how an query navigates through the gateway, evaluates intent, traverses database maps, and handles live external fail-safes:
+Every frontend conversational request follows a supervisor-routing loop. The diagram below maps how a user query navigates through the gateway, evaluates intent, traverses database maps, and handles live external fail-safes:
 
 ```mermaid
 graph TD
@@ -81,10 +85,8 @@ graph TD
     %% Ingestion Lane Setup
     DataFolder --> IngestWorkflow[IngestionPipeline Workflow]:::workflow
     
-    subgraph Ingestion_Pipeline ["Background 6-Stage Ingestion Loop (app/ingest_pipeline.py)"]
-        IngestWorkflow --> Parser[PDFLayoutParserAgent]:::agent
-        Parser --> Chunker[SlidingWindowChunkerAgent Parent/Child Split]:::agent
-        Chunker --> EntityExt[EntityExtractorAgent]:::agent
+    subgraph Ingestion_Pipeline ["Background 4-Stage Ingestion Loop (app/ingest_pipeline.py)"]
+        IngestWorkflow --> EntityExt[EntityExtractorAgent]:::agent
         EntityExt --> RelExt[RelationExtractorAgent Claims Miner]:::agent
         RelExt --> KGVal[KgValidatorAgent In-Memory Sanity]:::agent
         KGVal --> Indexer[IndexerAgent Transaction Coordinator]:::agent
@@ -133,9 +135,9 @@ nexusmind-adk/                             # Root workspace repository
     ├── agent.py                           # Framework bridge file re-exporting root_agent for adk web UI
     ├── root_gateway.py                    # Gateway orchestrator (Supervisor Agent, Router Graph, and Paths)
     ├── research_pipeline.py               # 5-stage deep analytical reasoning workflow layout
-    ├── ingest_pipeline.py                 # 6-stage background processing utilizing ParallelAgent forks
-    ├── infrastructure.py                  # PyPDF extractors, Chroma HTTP clients, and Neo4j connection poolers
-    ├── tools.py                           # Functional read/write database tool sets bridged to ADK wrappers
+    ├── ingest_pipeline.py                 # Optimized multi-block processing pipeline loop
+    ├── infrastructure.py                  # PyPDF extracts, CPU Chunkers, Chroma clients, and Neo4j connection poolers
+    ├── tools.py                           # Functional read/write database tool sets with real-time log prints
     └── states.py                          # Unified prompt instruction vault and structured Pydantic schemas
 
 ```
@@ -146,83 +148,80 @@ nexusmind-adk/                             # Root workspace repository
 
 ### 3.1 Background Hierarchical Ingestion Pipeline (`app/ingest_pipeline.py`)
 
-To prevent large manuals from breaking local context boundaries, this pipeline implements **Hierarchical Parent-Child Splitting** across 6 sequential agents. It flattens the file text content, partitions it into structural parent blocks (e.g., 2000 characters) based on headers, splits those into dense, overlapping child sub-chunks (e.g., 400 characters), and indexes them cross-retained.
+To prevent large manuals from breaking local memory limits, text formatting is split away from the models. The orchestrator invokes `pdf_extractor.slice_hierarchical_chunks()` to window strings programmatically on the **CPU**. It builds Parent context blocks (~2,000 characters) and Child sub-chunks (~400 characters, 100 overlap) in milliseconds before triggering the active model nodes loop.
 
 ```mermaid
 graph LR
-    Start([data/file]) --> Parser[PDFLayoutParserAgent]
-    Parser --> Chunker[SlidingWindowChunkerAgent]
+    Start([data/file]) --> Chunker[Native CPU Chunker Loop]
     Chunker --> EntityExt[EntityExtractorAgent]
     EntityExt --> RelExt[RelationExtractorAgent]
     RelExt --> KGVal[KgValidatorAgent]
     KGVal --> Indexer[IndexerAgent]
-    Indexer --> Chroma[(ChromaDB: Child Vectors)]
+    Indexer --> Chroma[(ChromaDB: nomic-embed-text)]
     Indexer --> Neo4j[(Neo4j: Parent Chunks & Claims)]
 
 ```
 
 #### The Agent Chain:
 
-1. **`PDFLayoutParserAgent`**: Unpacks layout binary byte streams, stripping out footers, headers, and structural formatting noise to pass clean text down.
-2. **`SlidingWindowChunkerAgent`**: Slices raw text streams hierarchically. It isolates large semantic **Parent chunks** along section markers while mapping smaller overlapping **Child fragments** underneath them.
-3. **`EntityExtractorAgent`**: Mines technical domain nodes (`Component`, `Architecture`, `Constraint`, `Metric`) from each chunk text, formatting an encyclopedic JSON map including short failure mode properties.
-4. **`RelationExtractorAgent`**: Identifies operational system interactions (`DEPENDS_ON`, `FEEDS_DATA_TO`, `HAS_CONSTRAINT`, `MITIGATES`) and isolates them into structured intermediate **Interaction Claim** JSON models.
-5. **`KgValidatorAgent`**: Operates entirely within runtime memory cache to check structural referential integrity. It cleans dangling node metrics and purges orphaned edge references before transaction execution.
-6. **`IndexerAgent`**: The database commit orchestrator. It calls the active tools concurrently, saving child text strings into **Chroma**, loading the Parent blocks into **Neo4j**, and stitching them together via explicit provenance edges (`[:MENTIONED_IN] -> (:ChildChunk)`).
+1. **`EntityExtractorAgent`**: Mines technical domain nodes (`Component`, `Architecture`, `Constraint`, `Metric`) from each targeted parent string, formatting a clean JSON dictionary payload including failure mode definitions.
+2. **`RelationExtractorAgent`**: Identifies operational system interactions (`DEPENDS_ON`, `FEEDS_DATA_TO`, `HAS_CONSTRAINT`, `MITIGATES`) and isolates them into structured intermediate **Interaction Claim** JSON schemas.
+3. **`KgValidatorAgent`**: Operates entirely within runtime memory cache to check schema referential integrity, matching edge nodes to existing entities and removing orphaned metrics.
+4. **`IndexerAgent`**: The database transaction coordinator. It invokes tools to index child text components to **Chroma**, commits Parent nodes to **Neo4j**, and links them structural-wise via explicit tracking paths (`[:MENTIONED_IN] -> (:Entity {label: 'ChildChunk'})`).
 
 ---
 
 ### 3.2 Dynamic Multi-Stage Research Loop (`app/research_pipeline.py`)
 
-When a query enters the research workflow, the agents do not perform standalone vector searches. Instead, they run an interleaved retrieval funnel to explore multi-hop factual chains and verify visibility.
+When an inquiry enters the research workflow, the agents do not perform isolated vector queries. Instead, they execute an interleaved retrieval funnel to explore multi-hop factual paths.
 
 #### The Agent Chain:
 
-1. **`PlannerAgent`**: Deconstructs the initial text inquiry, outputting a precise JSON parameter map containing optimized search keys.
-2. **`RetrievalAgent`**: The pipeline gatherer. It executes an interleaved multi-database loop using python tools:
-* **Stage 1 (`chroma_search`):** Scans Chroma to retrieve the top nearest-neighbor child sub-chunks.
-* **Stage 2 (`neo4j_traverse`):** Reads the retrieved chunk IDs, enters Neo4j, climbs up to the structural Parent node, and traverses 1–2 hops out to discover connected components and hidden structural **Claims**.
-* **Stage 3 (`chroma_fetch`):** Precision-extracts missing neighboring text segments using the target IDs returned during the graph traversal.
+1. **`PlannerAgent`**: Deconstructs the inquiry, outputting a precise JSON parameter map containing optimized search keys.
+2. **`RetrievalAgent`**: The pipeline gatherer. It executes an interleaved multi-database lookup loop via customized tools:
+* **Stage 1 (`chroma_search`):** Scans the vector store via `nomic-embed-text` to retrieve the top nearest-neighbor child chunk IDs.
+* **Stage 2 (`neo4j_traverse`):** Reads the retrieved chunk IDs, enters Neo4j, climbs up to the Parent block path, and traverses 1–2 hops out to discover connected concepts and hidden structural **Claims**.
+* **Stage 3 (`chroma_fetch`):** Precision-extracts missing neighboring text segments using the target neighbor chunk IDs discovered on the graph trail.
 
 
-3. **`ContextGatekeeperAgent`**: **The system evaluator core.** It evaluates the combined text payload against the user's initial question to verify completeness.
-* *Verdict -> Sufficient:* Forwards data down to the fusion block.
-* *Verdict -> Sparse Context:* Automatically executes **Stage 4 (`web_search`)** to scrape missing real-time duckduckgo context, merges it with the database content records, and forwards the package.
+3. **`ContextGatekeeperAgent`**: **The system evaluator core.** It evaluates data completeness against the user prompt:
+* *Verdict -> SUFFICIENT:* Forwards context strings directly down to the fusion engine block.
+* *Verdict -> INSUFFICIENT:* Automatically executes **Stage 4 (`web_search`)** to scrape missing real-time context, merges it with the database records, and forwards the package.
 
 
-4. **`KnowledgeFusionAgent`**: Formats the combined data streams, grouping overlapping semantic points into a clean, high-density layout.
-5. **`ReasonerAgent`**: Runs a multi-turn Chain-of-Thought (CoT) deduction process over the data block, tracing how the graph layout matches the vector facts.
-6. **`ResponseAgent`**: Compiles the final answer in publication-grade markdown with strict, inline bracketed source citations pointing directly back to document chunks.
+4. **`KnowledgeFusionAgent`**: Formats combined streams, deduplicating records and grouping overlapping semantic fields.
+5. **`ReasonerAgent`**: Runs a multi-turn Chain-of-Thought (CoT) deduction process, tracing how the graph layout matches the vector facts.
+6. **`ResponseAgent`**: Compiles the final answer in structured markdown with strict, inline bracketed source citations pointing directly back to document chunks.
 
 ---
 
 ### 3.3 System Root Supervisor Gateway (`app/root_gateway.py`)
 
-This pipeline serves as the primary system entrypoint, managing conversational turns, keeping state parameters persistent, and shielding local LLMs from context drift or hallucinated completions.
+This pipeline serves as the primary system entry point, managing conversational turns, keeping state parameters persistent, and shielding local LLMs from context drift.
 
-1. **`RootAgent`**: Acts as a standalone query rewriter. It parses conversation histories to distill multi-turn context into a standalone inquiry.
-2. **`capture_and_forward_query`**: A Python interceptor function that saves the rewritten standalone query string inside the workflow context state instance (`resolved_query`) before routing.
-3. **`ControlEngineRouter`**: An intent classifier agent that reads the clean string and outputs a single uppercase token token (`RESEARCH` or `CASUAL_CHAT`).
+1. **`RootAgent`**: Autonomous context rewriter. It parses conversation histories to distill multi-turn context into a singular standalone inquiry.
+2. **`capture_and_forward_query`**: A Python interceptor function that saves the rewritten standalone question inside the workflow context state instance (`resolved_query`) before routing.
+3. **`ControlEngineRouter`**: An intent classifier agent that reads the clean string and outputs a single uppercase token (`RESEARCH` or `CASUAL_CHAT`).
 4. **`determine_workflow_path`**: Evaluates the keyword token. If `RESEARCH` is matched, it fetches the pristine `resolved_query` back out from memory context state and forwards it down into the `deep_research_subgraph`. If `CASUAL_CHAT` is matched, it routes to `FastConversationalAgent`.
 
 ---
 
 ## 🛠️ 4. Atomic Core Tools Subsystem (`app/tools.py`)
 
-To allow the ADK framework to run tasks concurrently or map dependencies sequentially, operations are decoupled into atomic python modules:
+Every tool definition includes explicit `print()` telemetry streaming trackers so you can monitor records hitting your databases in real time from your terminal console.
 
 ### Ingestion Tool Registry
 
 * **`chroma_write`**: Vectorizes and indexes a single child text chunk into Chroma, returning the unique identity string token format `{document_name}_chunk_{index}`.
-* **`neo4j_merge_node`**: Creates or updates a domain concept classification node, applying deep properties and anchoring its reference to the vector chunk token.
-* **`neo4j_merge_claim`**: Implements relationship reification. It creates an independent `(:Interaction)` node with condition properties, binds it between subject/object entities, and hooks its provenance path directly to the chunk ID.
+* **`neo4j_merge_node`**: Creates or updates a domain concept node, applying properties and anchoring its pointer reference to the vector chunk token (`:MENTIONED_IN`).
+* **`neo4j_merge_claim`**: Implements relationship reification. It creates an independent `(:Interaction)` node, binds it between subject/object entities, and hooks its provenance path directly to the child chunk ID.
 
 ### Retrieval Tool Registry
 
-* **`chroma_search`**: Runs an active vector similarity scan against Chroma to grab top child sub-chunks matching the query.
+* **`chroma_search`**: Runs an active vector similarity scan against Chroma to grab top child sub-chunks matching the query string.
 * **`neo4j_traverse`**: Runs an advanced Cypher lookup extending outward from a chunk token to return multi-hop element graphs and structural interaction rules.
 * **`chroma_fetch`**: Fetches the raw text content of any target chunk ID found via the graph.
-* **`web_search`**: Scrapes external network channels as an emergency fallback if the local knowledge pool is sparse.
+* **`web_search`**: Scrapes external duckduckgo network channels as an emergency fallback if the local knowledge pool is sparse.
 
 ---
 
@@ -230,7 +229,7 @@ To allow the ADK framework to run tasks concurrently or map dependencies sequent
 
 ### 1. Configure the Environment Specs
 
-Ensure a `.env` file exists in your project's root workspace directory containing these topology configurations:
+Ensure a `.env` file exists in your project's root workspace directory containing these configuration settings:
 
 ```bash
 # Options: LOCAL (Ollama Local Topology) or CLOUD (Gemini Cloud)
@@ -240,7 +239,8 @@ GEMINI_API_KEY="your_google_ai_studio_api_key"
 LOCAL_LLM_URL="http://localhost:11434"
 
 OLLAMA_MODEL="qwen2.5-coder:7b"
-GEMINI_MODEL="gemini/gemini-2.5-flash"
+GEMINI_MODEL="gemini-2.5-flash"
+EMBEDDING_MODEL="nomic-embed-text"
 
 CHROMA_HOST="localhost"
 CHROMA_PORT=8000
@@ -260,16 +260,28 @@ docker compose up -d
 
 ```
 
-### 3. Ingest PDF Documents via CLI
+### 3. Clear Cache Repositories (Dimension Alignment Pre-flight)
 
-To ingest documents directly via the terminal workspace, execute the standalone ingestion module with the source file location path:
+Because `nomic-embed-text` enforces a strict 768-dimension coordinate system, old database runs must be reset to avoid matrix conflicts:
+
+```cypher
+// Clear Neo4j from your Neo4j Browser window:
+MATCH (n) DETACH DELETE n;
+
+```
+
+### 4. Ingest PDF Documents via CLI
+
+To ingest your documents directly via your terminal workspace, run the standalone ingestion module with the source file location path:
 
 ```bash
 python -m scripts.ingest data/rag_details.pdf
 
 ```
 
-### 4. Boot the Interactive Web Interface Dashboard
+*(Your terminal will stream custom live console tracing logs as the programmatic chunker handles windows, followed by your sequential model extraction passes!)*
+
+### 5. Boot the Interactive Web Interface Dashboard
 
 Launch the unified client dashboard UI to chat with **Nexa** and monitor cognitive retrieval paths:
 
@@ -277,6 +289,3 @@ Launch the unified client dashboard UI to chat with **Nexa** and monitor cogniti
 streamlit run streamlit_app.py
 
 ```
-
-```
----

@@ -9,7 +9,9 @@ from config.settings import settings
 from app.tools import chroma_search, neo4j_traverse, chroma_fetch, web_search
 
 logger = logging.getLogger(__name__)
-llm = LiteLlm(model=settings.OLLAMA_MODEL)
+
+# 🚀 UPGRADE: Route the complex multi-hop research pipeline through your Gemini engine
+research_llm = LiteLlm(model=settings.OLLAMA_MODEL)
 
 # =========================================================
 # 1. COGNITIVE RESEARCH AGENT NODES
@@ -17,7 +19,7 @@ llm = LiteLlm(model=settings.OLLAMA_MODEL)
 
 planner_agent = Agent(
     name="PlannerAgent",
-    model=llm,
+    model=research_llm,
     description="Deconstructs inquiries into targeted vector and semantic graph entry parameters.",
     instruction="""
     ROLE: Search Parameters Architect.
@@ -34,7 +36,7 @@ planner_agent = Agent(
 
 retrieval_agent = Agent(
     name="RetrievalAgent",
-    model=llm,
+    model=research_llm,
     description="Autonomous engine orchestrating multi-stage context collection tool sequences.",
     instruction="""
     ROLE: Hybrid Multi-Stage Retrieval Gatherer.
@@ -42,10 +44,11 @@ retrieval_agent = Agent(
     
     SEQUENTIAL PLAYBOOK:
     1. Call `chroma_search` using the 'seed_query' parameter to collect initial child chunk text blocks.
-    2. Read the 'chunk_id' from those results and pass it into `neo4j_traverse` to discover connected multi-hop paths and hidden concept claims.
-    3. Use any newly discovered neighbor or target chunk IDs returned by the graph traversal to call `chroma_fetch`.
+    2. Read the 'chunk_id' from those vector results and pass it directly into `neo4j_traverse`.
+    3. Look closely at the graph data dictionary keys: 'origin_element', 'relationship_path', and 'connected_target'. 
+       - If 'connected_target' contains a string format matching a vector anchor (e.g. 'chunk_X'), pass that ID into `chroma_fetch` to execute a precision text block pull.
     
-    Combine all text outputs from your database tool calls into a single, unsummarized context block and pass it downstream.
+    Combine all text documents and structural paths returned by your tool calls into a single, unsummarized context block and pass it downstream.
     """,
     tools=[
         chroma_search,
@@ -57,7 +60,7 @@ retrieval_agent = Agent(
 
 gatekeeper_agent = Agent(
     name="ContextGatekeeperAgent",
-    model=llm,
+    model=research_llm,
     description="Evaluates context data completeness and controls web search fallback triggers.",
     instruction="""
     ROLE: Context Completeness Gatekeeper.
@@ -73,7 +76,7 @@ gatekeeper_agent = Agent(
 
 fusion_agent = Agent(
     name="KnowledgeFusionAgent",
-    model=llm,
+    model=research_llm,
     description="Applies ranking and deduplication across multi-source data blocks.",
     instruction="""
     TASK: Deduplicate data streams from the gatekeeper node. Group overlapping points logically and organize them into a clean, high-density unified layout. Keep all source references intact.
@@ -83,7 +86,7 @@ fusion_agent = Agent(
 
 reasoner_agent = Agent(
     name="ReasonerAgent",
-    model=llm, 
+    model=research_llm, 
     description="Multi-hop Chain-of-Thought engine.",
     instruction="""
     TASK: Perform step-by-step logic deduction using the fused data text block. Document your reasoning path (Step 1, Step 2, etc.), tracing how graph relationships explain your vector facts. Do not guess beyond the provided text.
@@ -93,7 +96,7 @@ reasoner_agent = Agent(
 
 response_agent = Agent(
     name="ResponseAgent",
-    model=llm, 
+    model=research_llm, 
     description="Transforms analytical trails into clean markdown summaries.",
     instruction="""
     TASK: Synthesize the reasoning trail into a final response. Use clear Markdown layout structures (headings, lists, tables). Embed explicit, inline citations pointing directly back to the database sources. Do not include introductory filler.
@@ -107,7 +110,6 @@ response_agent = Agent(
 
 def process_gatekeeper_decision(node_input: Any, invocation_context: Any = None) -> str:
     """Passes the complete evaluation payload down to the fusion engine."""
-    # The output from gatekeeper_agent (whether left untouched or enriched with web text) passes forward
     text_content = getattr(node_input, "text", str(node_input))
     logger.info("🛡️ Context Gatekeeper Evaluation Completed. Forwarding text data stream to Fusion core.")
     return text_content

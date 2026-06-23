@@ -7,8 +7,6 @@ from dotenv import load_dotenv
 # Define the absolute target directory mapping for the .env file
 ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 
-# ⚡ CRITICAL FIX: Explicitly push .env variables into os.environ 
-# right here so the Google GenAI core SDK can see them during module imports.
 load_dotenv(dotenv_path=ENV_PATH)
 
 class Settings(BaseSettings):
@@ -23,6 +21,9 @@ class Settings(BaseSettings):
     # Provider-Specific Model Selections
     OLLAMA_MODEL: str = Field(..., env="OLLAMA_MODEL")
     GEMINI_MODEL: str = Field(..., env="GEMINI_MODEL")
+    
+    # ⚡ FIXED: Maps to the env key "EMBEDDING_MODEL", using "nomic-embed-text" as the default
+    EMBEDDING_MODEL: str = Field("nomic-embed-text", env="EMBEDDING_MODEL")
 
     # --- Core Database Cluster Topology ---
     # Vector Engine Links (Chroma DB)

@@ -76,9 +76,10 @@ with st.sidebar:
                 # 🎯 ALIGNED CONFIG: Matches our strict core agent input instructions schema
                 payload_string = f"Target PDF Filename: {uploaded_pdf.name}\nRaw Document Stream Source:\n{parsed_text_dump}"
                 
-                # ⚡ Run Ingestion directly through its native ADK workflow primitive
+                # ⚡ ADK 2.3 SPEC FIX: Pass payload string text positionally
                 outcome = run_async_task(ingest_runner.run(
-                    input_text=payload_string,
+                    payload_string,
+                    session_id="ui_ingest_session",
                     user_id="ingest_service"
                 ))
                 
@@ -103,9 +104,9 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("🧠 Nexa is thinking..."):
             try:
-                # ⚡ Run query straight to the root Supervisor Agent which passes down to your graph
+                # ⚡ ADK 2.3 SPEC FIX: Pass chat prompt text string positionally
                 outcome = run_async_task(chat_runner.run(
-                    input_text=user_input,
+                    user_input,
                     session_id="active_chat_session",
                     user_id="default_user"
                 ))

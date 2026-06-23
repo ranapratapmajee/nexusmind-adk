@@ -1,3 +1,4 @@
+# filepath: app/root_gateway.py
 import logging
 from typing import Any
 from config.settings import settings
@@ -7,7 +8,7 @@ from app.research_pipeline import deep_research_subgraph
 
 logger = logging.getLogger(__name__)
 
-# Initialize configurations
+# ⚡ KEEP LOCAL: Root gateway initialized cleanly via your local model handle
 llm = LiteLlm(model=settings.OLLAMA_MODEL)
 
 # =========================================================
@@ -103,6 +104,7 @@ def determine_workflow_path(node_input: Any, invocation_context: Any = None) -> 
     if not user_query or user_query.upper() in ["RESEARCH", "CASUAL_CHAT"]:
         user_query = str(node_input)
 
+    # Robust containment check to safeguard local model conversational leaking quirks
     if "RESEARCH" in decision:
         # Securely forward the clean, text-based query payload down into the research pipeline
         return Event(route="RESEARCH_PATH", output=user_query)
