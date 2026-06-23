@@ -25,8 +25,8 @@ st.caption("Enterprise GraphRAG Pipeline Interface (Google ADK Framework)")
 @st.cache_resource
 def get_nexus_runners():
     """Initializes and holds single instance runners directly inside the UI context."""
-    chat_runner = InMemoryRunner(agent=root_agent, app_name="nexusmind")
-    ingest_runner = InMemoryRunner(agent=ingest_workflow_pipeline, app_name="nexusmind_batch_ingest")
+    chat_runner = InMemoryRunner(agent=root_agent, app_name="app")
+    ingest_runner = InMemoryRunner(agent=ingest_workflow_pipeline, app_name="app")
     
     if hasattr(chat_runner, "auto_create_session"):
         chat_runner.auto_create_session = True
@@ -72,7 +72,9 @@ with st.sidebar:
                 with open(saved_path, "rb") as f:
                     raw_bytes = f.read()
                 parsed_text_dump = pdf_extractor.extract_clean_text(raw_bytes)
-                payload_string = f"DOCUMENT_INJECT_STREAM:\nFilename: {uploaded_pdf.name}\nContent:\n{parsed_text_dump}"
+                
+                # 🎯 ALIGNED CONFIG: Matches our strict core agent input instructions schema
+                payload_string = f"Target PDF Filename: {uploaded_pdf.name}\nRaw Document Stream Source:\n{parsed_text_dump}"
                 
                 # ⚡ Run Ingestion directly through its native ADK workflow primitive
                 outcome = run_async_task(ingest_runner.run(

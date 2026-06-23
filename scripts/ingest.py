@@ -47,14 +47,16 @@ async def run_cli_ingestion(file_path: str):
         with open(staged_destination, "rb") as f:
             raw_bytes = f.read()
             
-        # Parse text layout out of the document binary
+        # Parse text layout out of the document binary using infrastructure utilities
         parsed_text_dump = pdf_extractor.extract_clean_text(raw_bytes)
-        payload_string = f"DOCUMENT_INJECT_STREAM:\nFilename: {target_path.name}\nContent:\n{parsed_text_dump}"
+        
+        # Format the inbound payload stream context
+        payload_string = f"Target PDF Filename: {target_path.name}\nRaw Document Stream Source:\n{parsed_text_dump}"
 
-        # Initialize the isolated batch runner
+        # Initialize the isolated batch runner matching your config
         ingest_runner = InMemoryRunner(
             agent=ingest_workflow_pipeline, 
-            app_name="nexusmind_batch_ingest"
+            app_name="app"
         )
         if hasattr(ingest_runner, "auto_create_session"):
             ingest_runner.auto_create_session = True

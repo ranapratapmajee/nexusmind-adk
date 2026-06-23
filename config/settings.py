@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     EXECUTION_MODE: str = Field("LOCAL", env="EXECUTION_MODE") # Default to LOCAL if missing
 
     # --- Model Infrastructure Configurations ---
-    GEMINI_API_KEY: str = Field(..., env="GEMINI_API_KEY")
+    GOOGLE_API_KEY: str = Field(..., env="GOOGLE_API_KEY")
     LOCAL_LLM_URL: str = Field(..., env="LOCAL_LLM_URL")
     
     # Provider-Specific Model Selections

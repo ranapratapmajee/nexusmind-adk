@@ -1,90 +1,135 @@
 # filepath: app/research_pipeline.py
 import logging
-from google.adk import Agent, Workflow
+from typing import Any
+from google.adk import Agent, Workflow, Event
 from google.adk.models.lite_llm import LiteLlm
 from config.settings import settings
-from app.tools import chroma_tool, neo4j_tool, web_tool # For research
+
+# Import the multi-stage retrieval tools we created
+from app.tools import chroma_search, neo4j_traverse, chroma_fetch, web_search
 
 logger = logging.getLogger(__name__)
-
-# Initialize both runner configurations
-local_llm = LiteLlm(model=settings.OLLAMA_MODEL)
-cloud_llm = LiteLlm(model=settings.GEMINI_MODEL)
-
-# Dynamic allocation switch matrix
-if settings.EXECUTION_MODE.upper() == "CLOUD":
-    logger.info("☁️ System Engine utilizing CLOUD topology matrix (Gemini)")
-    llm = cloud_llm
-else:
-    logger.info("💻 System Engine utilizing LOCAL topology matrix (Ollama)")
-    llm = local_llm
+llm = LiteLlm(model=settings.OLLAMA_MODEL)
 
 # =========================================================
-# 1. SPECIALIZED RESEARCH AGENT NODES
+# 1. COGNITIVE RESEARCH AGENT NODES
 # =========================================================
 
 planner_agent = Agent(
     name="PlannerAgent",
     model=llm,
-    description="Deconstructs unstructured inquiries into search paths.",
-    instruction="""Analyze the incoming user prompt. Generate clear search terms for vector lookups 
-    and explicit entity tokens for graph traversal queries.""",
+    description="Deconstructs inquiries into targeted vector and semantic graph entry parameters.",
+    instruction="""
+    ROLE: Search Parameters Architect.
+    TASK: Convert the user's question into precise string keys for step-by-step vector and graph tool execution.
+    
+    OUTPUT FORMAT FORMATTING:
+    Output a valid JSON object with 'seed_query' mapping to the core question. Avoid markdown or chatter.
+    {
+        "seed_query": "primary meaning string"
+    }
+    """,
     mode="single_turn"
 )
 
 retrieval_agent = Agent(
     name="RetrievalAgent",
     model=llm,
-    description="Autonomous database retrieval worker calling specialized MCP data tools.",
-    instruction="""Review the generated plan passed from the planner node. 
-    Execute the chroma_tool, neo4j_tool, and web_tool to extract raw context snippets matching the requested vectors and graph entities.""",
-    tools=[chroma_tool, neo4j_tool, web_tool],
+    description="Autonomous engine orchestrating multi-stage context collection tool sequences.",
+    instruction="""
+    ROLE: Hybrid Multi-Stage Retrieval Gatherer.
+    TASK: Execute the available tools in sequence to build a complete context picture.
+    
+    SEQUENTIAL PLAYBOOK:
+    1. Call `chroma_search` using the 'seed_query' parameter to collect initial child chunk text blocks.
+    2. Read the 'chunk_id' from those results and pass it into `neo4j_traverse` to discover connected multi-hop paths and hidden concept claims.
+    3. Use any newly discovered neighbor or target chunk IDs returned by the graph traversal to call `chroma_fetch`.
+    
+    Combine all text outputs from your database tool calls into a single, unsummarized context block and pass it downstream.
+    """,
+    tools=[
+        chroma_search,
+        neo4j_traverse,
+        chroma_fetch
+    ],
+    mode="single_turn"
+)
+
+gatekeeper_agent = Agent(
+    name="ContextGatekeeperAgent",
+    model=llm,
+    description="Evaluates context data completeness and controls web search fallback triggers.",
+    instruction="""
+    ROLE: Context Completeness Gatekeeper.
+    TASK: Evaluate if the gathered database context contains enough detailed facts to comprehensively answer the user's original query.
+    
+    STRICT VERDICT RULES:
+    - If the database context is thorough, detailed, and directly answers the question -> Output exactly: SUFFICIENT
+    - If the database context is empty, brief, or missing specific details -> Call `web_search` using the query, merge the internet search data with the database records, and output the consolidated text.
+    """,
+    tools=[web_search],
     mode="single_turn"
 )
 
 fusion_agent = Agent(
     name="KnowledgeFusionAgent",
     model=llm,
-    description="Applies Reciprocal Rank Fusion principles to rank database overlaps.",
-    instruction="""Analyze the raw multi-source retrieval outputs passed from the retrieval node. 
-    Mathematically cross-reference strings matching identical entity keywords using the Reciprocal Rank Fusion formula: 1 / (60 + rank).
-    Compile a single, compressed, high-density unified context text block.""",
+    description="Applies ranking and deduplication across multi-source data blocks.",
+    instruction="""
+    TASK: Deduplicate data streams from the gatekeeper node. Group overlapping points logically and organize them into a clean, high-density unified layout. Keep all source references intact.
+    """,
     mode="single_turn"
 )
 
 reasoner_agent = Agent(
     name="ReasonerAgent",
     model=llm, 
-    description="Multi-hop Chain-of-Thought analytical core exploring linked data nodes.",
-    instruction="""Perform a rigorous Chain-of-Thought analysis over the fused context block passed from the fusion node.
-    Do not jump to immediate structural conclusions. Outline explicit chronological deduction steps.
-    Resolve multi-hop connections (e.g., if Node A links to Node B, and Node B links to Node C).""",
+    description="Multi-hop Chain-of-Thought engine.",
+    instruction="""
+    TASK: Perform step-by-step logic deduction using the fused data text block. Document your reasoning path (Step 1, Step 2, etc.), tracing how graph relationships explain your vector facts. Do not guess beyond the provided text.
+    """,
     mode="single_turn"
 )
 
 response_agent = Agent(
     name="ResponseAgent",
     model=llm, 
-    description="Final output formatter generating clean markdown, source citations, and interactive cross-questions.",
-    instruction="""Read the raw reasoning path and dense context compilation passed from the reasoner node.
-    1. Draft a polished production-grade markdown answer complete with bracketed citation tracking.
-    2. Proactively generate exactly 3 highly conversational, context-aware interactive follow-up cross-questions.""",
+    description="Transforms analytical trails into clean markdown summaries.",
+    instruction="""
+    TASK: Synthesize the reasoning trail into a final response. Use clear Markdown layout structures (headings, lists, tables). Embed explicit, inline citations pointing directly back to the database sources. Do not include introductory filler.
+    """,
     mode="single_turn"
 )
 
 # =========================================================
-# 2. DECLARATIVE WORKFLOW TOPOLOGY
+# 2. DYNAMIC WORKFLOW ROUTING FUNCTION
 # =========================================================
+
+def process_gatekeeper_decision(node_input: Any, invocation_context: Any = None) -> str:
+    """Passes the complete evaluation payload down to the fusion engine."""
+    # The output from gatekeeper_agent (whether left untouched or enriched with web text) passes forward
+    text_content = getattr(node_input, "text", str(node_input))
+    logger.info("🛡️ Context Gatekeeper Evaluation Completed. Forwarding text data stream to Fusion core.")
+    return text_content
+
+# =========================================================
+# 3. EXPORTED WORKFLOW TOPOLOGY
+# =========================================================
+
 deep_research_subgraph = Workflow(
     name="DeepResearchPipeline",
     edges=[
-        (
-            "START",
-            planner_agent,
-            retrieval_agent,
-            fusion_agent,
-            reasoner_agent,
-            response_agent
-        )
+        # Blueprint and Gathering Phase
+        ("START", planner_agent),
+        (planner_agent, retrieval_agent),
+        
+        # Guard Phase: Intercepting context to check for sparse data bounds
+        (retrieval_agent, gatekeeper_agent),
+        (gatekeeper_agent, process_gatekeeper_decision),
+        
+        # Synthesis and Writing Phase
+        (process_gatekeeper_decision, fusion_agent),
+        (fusion_agent, reasoner_agent),
+        (reasoner_agent, response_agent)
     ]
 )
