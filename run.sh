@@ -5,8 +5,7 @@ set -e
 
 # Configuration variables
 VENV_DIR=".venv"
-STREAMLIT_APP="streamlit_app.py"
-LOG_FILE="nexusmind_runtime.log"
+GRADIO_APP="gradio_app.py"  # 🌟 FIXED: Pointing to Gradio workspace instead of Streamlit
 
 # Setup text styling colors
 GREEN='\033[0;32m'
@@ -32,9 +31,13 @@ log_error() {
 cleanup_services() {
     echo ""
     log_warn "🛑 Termination signal intercepted. Safely shutting down app runtime..."
-    # Terminate all background processes spawned within this script group
     trap - SIGINT SIGTERM # Prevent infinite loop recursion
-    kill 0 2>/dev/null || true
+    
+    # 🌟 FIXED: Target specifically running app pids rather than terminal group kill 0
+    if [ -not -z "$APP_PID" ]; then
+        kill "$APP_PID" 2>/dev/null || true
+    fi
+    
     log_info "✅ Port cleared. Goodbye!"
     exit 0
 }
@@ -50,6 +53,7 @@ echo "========================================================="
 if [ -d "$VENV_DIR" ]; then
     log_info "Found virtual environment at '$VENV_DIR'. Activating..."
     source "$VENV_DIR/bin/activate"
+    RUN_PREFIX=""
 else
     log_warn "No virtual environment found at '$VENV_DIR'."
     if command -v uv &> /dev/null; then
@@ -95,17 +99,23 @@ else
 fi
 
 # 3. Export PythonPath to ensure clean app module resolution
-export PYTHONPATH=$PYTHONPATH:$(pwd)
+# 🌟 FIXED: Standard configuration checks for preceding values to prevent syntax splits
+if [ -z "$PYTHONPATH" ]; then
+    export PYTHONPATH=$(pwd)
+else
+    export PYTHONPATH=$PYTHONPATH:$(pwd)
+fi
 
-# 4. Launch Streamlit UI Web Gateway Engine
-if [ -f "$STREAMLIT_APP" ]; then
-    log_info "Spawning Streamlit Web Application Node..."
+# 4. Launch Gradio UI Web Gateway Engine
+if [ -f "$GRADIO_APP" ]; then
+    log_info "Spawning Gradio Web Application Node on http://127.0.0.1:7860 ..."
     echo "--------------------------------------------------------"
     
-    # Run Streamlit directly inside the main terminal channel, avoiding pipe swallowing
-    # We use basic shell logging to ensure Ctrl+C cuts straight to the root application
-    ${RUN_PREFIX}streamlit run "$STREAMLIT_APP"
+    # 🌟 FIXED: Runs Gradio natively via python invocation matching your app architecture
+    ${RUN_PREFIX}python "$GRADIO_APP" &
+    APP_PID=$!
+    wait $APP_PID
 else
-    log_error "Target entrypoint UI matrix file '$STREAMLIT_APP' was not found in working path."
+    log_error "Target entrypoint UI matrix file '$GRADIO_APP' was not found in working path."
     exit 1
 fi

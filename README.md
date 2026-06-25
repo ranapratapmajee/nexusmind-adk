@@ -35,6 +35,7 @@ NexusMind replaces monolithic database lookups with a modular ecosystem. The pla
 Every frontend conversational request follows a supervisor-routing loop. The diagram below maps how a user query navigates through the gateway, evaluates intent, traverses database maps, and handles live external page scraping deep-dives:
 
 ```mermaid
+
 graph TD
     %% Component Style Classes
     classDef client fill:#2d3436,stroke:#dfe6e9,stroke-width:2px,color:#fff;
@@ -44,9 +45,10 @@ graph TD
     classDef agent fill:#e17055,stroke:#fab1a0,stroke-width:2px,color:#fff;
     classDef tool fill:#fdcb6e,stroke:#ffeaa7,stroke-width:2px,color:#2d3436;
     classDef storage fill:#b2bec3,stroke:#dfe6e9,stroke-width:2px,color:#2d3436;
+    classDef output fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#fff;
 
-    %% Presentation Layer
-    UI[Gradio Chat Interface Workspace]:::client <--> |chat_runner.run| RootGateway[RootAgentWorkflow]:::orchestrator
+    %% Presentation Layer (User Input Entry)
+    UI[Gradio Chat Interface Workspace]:::client --> |1. user_input.submit / click| RootGateway[RootAgentWorkflow]:::orchestrator
     CLI[app/ingest.py CLI Module]:::client --> |Direct Arguments| DataFolder[data/ File Storage Directory]:::storage
 
     %% Gateway Routing Subsystem
@@ -59,7 +61,6 @@ graph TD
 
     %% Research Pipeline Processing
     subgraph Research_Execution_Pipeline ["Research Execution Subgraph Loop (app/agent.py)"]
-        
         %% Atomic Tools
         subgraph Tool_Registry ["Atomic Core Tools Registry (app/tools.py)"]
             Retrieval --> T1[graph_rag_retrieval: Vector & Graph Hop]:::tool
@@ -68,6 +69,13 @@ graph TD
         
         Retrieval --> Synthesis[SynthesisAgent Technical Reporter]:::agent
     end
+
+    %% Presentation Layer (Unified Token Output Streaming to Frontend)
+    FastAgent --> |2a. Event Text Token Stream Payload| StreamFilter[Gradio stream_nexa_response Function]:::output
+    Synthesis --> |2b. Event Text Token Stream Payload| StreamFilter
+    
+    StreamFilter --> |3. Filter Out Routing Tokens & Token Aggregation| UICanvas[Final User Canvas Chat Bubble]:::client
+    UICanvas --> |4. Renders Clean Markdown Output on Screen| EndUserNode((Active End-User UI Viewports)):::client
 
     %% Ingestion Lane Setup
     DataFolder --> IngestWorkflow[IngestionPipeline Workflow]:::workflow
