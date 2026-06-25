@@ -8,7 +8,9 @@ from google.adk.workflow import START, node
 from google.adk.models.lite_llm import LiteLlm
 from app.tools import graph_rag_retrieval, web_search
 
-llm = LiteLlm(model=settings.OLLAMA_MODEL)
+local_llm = LiteLlm(model=settings.OLLAMA_MODEL)
+cloud_llm = settings.GEMINI_MODEL
+llm= local_llm
 
 # =========================================================
 # 1. STRUCTURAL GLOBAL STATE SCHEMA
@@ -39,36 +41,29 @@ fast_agent = Agent(
     instruction="Respond warmly and politely to the user greeting: {user_query?}. Keep your answer friendly and concise (max 2 sentences)."
 )
 
-retrieval_agent = Agent(
-    name="RetrievalAgent",
-    description="Extracts search terms from complex technical questions and runs parallel GraphRAG and Web search tools.",
+research_agent = Agent(
+    name="ResearchAgent",
+    description="Executes tools directly and synthesizes data into a highly comprehensive plain bulleted report with isolated references.",
     model=llm,
     instruction="""
-    You are a Data Gathering Specialist. Your input is a raw user question: {user_query?}.
+    ROLE: Expert Technical Research Synthesizer. 
     
-    CRITICAL STEPS:
-    1. Break down the question into 2-3 specific search keywords or phrases.
-    2. Execute the 'graph_rag_retrieval' and 'web_search' tools simultaneously using those keywords.
-    3. Output the raw, combined information returned from both tools. Do not add any formatting or commentary.
+    TARGET GOAL: Exhaustively answer the user's core query string.
+    
+    TASK: You must call your attached tools to gather data, then combine the full text payloads from BOTH your internal knowledge base logs and your live web scraping search paths to build a comprehensive summary. Do not miss any details.
+
+    ⚙️ MANDATORY INGESTION LAWS:
+    1. Extract all definitions, structures, and statistical rules present in your tool results. 
+    2. Isolate specific technical deep learning definitions, structural layers (hidden networks, neurons), active network architectures (CNN, RNN, LSTM, Transformers, GANs), and core structural comparisons between Machine Learning vs Deep Learning.
+    3. Maximize informational density. Ensure your output contains multiple detailed bullet points explaining these architectures comprehensively.
+
+    🔒 STYLING GUIDELINES:
+    1. Output your entire response using ONLY plain bullet points. DO NOT use any Markdown headers (like # or ##), bold text section dividers, asterisks for sections, or blockquotes.
+    2. Start directly with the bulleted findings. DO NOT include introductory text, meta-commentary, or call out function parameter objects.
+    3. KEEP INLINE FACTS CLEAN: Do not place brackets, citation tags, or raw string URLs inside the core body bullet points. Keep the sentences clean.
+    4. REFERENCES SECTION: Conclude your response with explicit bullet points labeled exactly as 'REFERENCES - Source Parent ID:' and 'REFERENCES - Source Website URL:' to cleanly isolate all chunk hashes and domain strings collected at the very bottom.
     """,
     tools=[graph_rag_retrieval, web_search]
-)
-
-synthesis_agent = Agent(
-    name="SynthesisAgent",
-    description="Synthesizes raw parallel tool data into a cohesive, professional technical markdown report with citations.",
-    model=llm,
-    instruction="""
-    You are an Expert Technical Research Synthesizer. 
-    Take the raw tool results provided by the RetrievalAgent and draft a final response for the user.
-
-    STRICT OUTPUT GUIDELINES:
-    1. DO NOT mention the words 'tool', 'graph_rag_retrieval', 'web_search', or 'RetrievalAgent'.
-    2. DO NOT include meta-commentary like "Sure, here is the information...". Start directly with the technical findings.
-    3. Synthesize the findings into an authoritative answer, deduplicating overlapping facts.
-    4. Format cleanly using structured Markdown headers, bullet points, and explicit numbered citations (e.g., [1], [2]).
-    5. Conclude with a clear 'References' section linking the sources provided in the tool payload.
-    """
 )
 
 # =========================================================
@@ -77,25 +72,34 @@ synthesis_agent = Agent(
 @node
 def initialize_session(ctx: Workflow, node_input: Any) -> Any:
     """
-    Runs at the absolute START of the conversation turn. Caches the original user prompt in shared memory so it is safely accessible later, then passes it along to the RouterAgent unchanged.
+    Runs at the absolute START of the conversation turn. Strips out wrapper meta-objects 
+    to extract a clean string primitive for the target query state.
     """
-    raw_text = getattr(node_input, "text", str(node_input)).strip()
+    if hasattr(node_input, "text"):
+        raw_text = str(node_input.text).strip()
+    elif isinstance(node_input, dict) and "text" in node_input:
+        raw_text = str(node_input["text"]).strip()
+    else:
+        raw_text = str(node_input).strip()
+        
     ctx.state["user_query"] = raw_text
-    return node_input
+    return raw_text
 
 @node
 def control_engine(ctx: Workflow, node_input: Any) -> Event:
     """
-    Evaluates the string token produced dynamically by the RouterAgent and handles branching control flow without hardcoded text keywords.
+    Evaluates the string token produced dynamically by the RouterAgent and handles branching control flow.
+    Enforces a clean string extraction right before passing control to prevent object bleeding.
     """
-    # Grab the dynamic decision from the router agent payload output
     llm_decision = str(node_input).strip().upper()
-    user_input = ctx.state.get("user_query", "")
+    
+    # 🧼 CRITICAL FIX: Extract the pristine string primitive from our state cache
+    clean_query_string = str(ctx.state.get("user_query", "")).strip()
 
     if "CHAT_PATH" in llm_decision:
-        return Event(route="ROUTE_TO_CHAT", actions={"transfer_to_agent": "FastConversationalAgent"}, text=user_input)
+        return Event(route="ROUTE_TO_CHAT", actions={"transfer_to_agent": "FastConversationalAgent"}, text=clean_query_string)
     
-    return Event(route="ROUTE_TO_RESEARCH", actions={"transfer_to_agent": "RetrievalAgent"}, text=user_input)
+    return Event(route="ROUTE_TO_RESEARCH", actions={"transfer_to_agent": "ResearchAgent"}, text=clean_query_string)
 
 # =========================================================
 # 4. STREAMLINED GRAPH TOPOLOGY
@@ -104,20 +108,12 @@ root_agent = Workflow(
     name="RootAgentWorkflow",
     state_schema=AgentState,
     edges=[
-        # Step 1: Capture user input and forward it straight to the Router Agent
         (START, initialize_session),
         (initialize_session, router_agent),
-        
-        # Step 2: Pass the Router's classification text directly into the control engine
         (router_agent, control_engine),
-        
-        # Step 3: Switchboard routes execution dynamically based on the engine's event evaluation
         (control_engine, {
             "ROUTE_TO_CHAT": fast_agent,
-            "ROUTE_TO_RESEARCH": retrieval_agent
-        }),
-        
-        # Step 4: Execute the Stage 2 research pipeline sequence if targeted
-        (retrieval_agent, synthesis_agent)
+            "ROUTE_TO_RESEARCH": research_agent
+        })
     ]
 )

@@ -1,14 +1,14 @@
 # 🧠 NexusMind Enterprise Architecture — Powered by Nexa
 
-NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK)** framework. 
+NexusMind is an enterprise-grade GraphRAG (Knowledge Graph + Vector Retrieval-Augmented Generation) platform engineered using the native **Google Agent Development Kit (ADK)** framework.
 
-The architecture completely decouples background knowledge graph synthesis from real-time user query traversal threads. It introduces a high-performance **Programmatic CPU Parent-Child Chunking Engine** to bypass local model latency barriers, handles large manuals cleanly, and implements a centralized orchestration routing network to handle both low-latency conversational responses and deep-scrape hybrid research loops natively.
+The platform implements a highly streamlined, low-latency execution layout by replacing multi-stage agentic middlemen with a high-performance **ResearchAgent** that handles tool execution, query alignment, and technical data synthesis directly.
 
 ---
 
 ## 🗺️ 1. Master System Architecture & Pipeline Diagrams
 
-NexusMind replaces monolithic database lookups with a modular ecosystem. The platform separates its operational layers into a high-speed, programmatic **Asynchronous Batch Ingestion Pipeline** and an **Interleaved Multi-Stage Research Loop**.
+NexusMind separates its operational layers into a high-speed, programmatic **Asynchronous Batch Ingestion Pipeline** and an **Optimized, Deduplicated Multi-Database Research Loop**.
 
 ```text
                                 [ PDF Document File Asset ]
@@ -32,10 +32,9 @@ NexusMind replaces monolithic database lookups with a modular ecosystem. The pla
 
 ### 1.1 Live Chat Interaction Turn & Execution Flow
 
-Every frontend conversational request follows a supervisor-routing loop. The diagram below maps how a user query navigates through the gateway, evaluates intent, traverses database maps, and handles live external page scraping deep-dives:
+Every user request is routed dynamically by a single programmatic central orchestration switchboard. The diagram below maps how a pristine query string navigates the gateway, splits conversational lines from complex research tasks, triggers direct parallel tools with parent context deduplication, and enforces zero-loss bulleted report compilation:
 
 ```mermaid
-
 graph TD
     %% Component Style Classes
     classDef client fill:#2d3436,stroke:#dfe6e9,stroke-width:2px,color:#fff;
@@ -48,34 +47,31 @@ graph TD
     classDef output fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#fff;
 
     %% Presentation Layer (User Input Entry)
-    UI[Gradio Chat Interface Workspace]:::client --> |1. user_input.submit / click| RootGateway[RootAgentWorkflow]:::orchestrator
+    UI[Gradio Chat Interface Workspace]:::client --> |1. user_input.submit| RootGateway[RootAgentWorkflow]:::orchestrator
     CLI[app/ingest.py CLI Module]:::client --> |Direct Arguments| DataFolder[data/ File Storage Directory]:::storage
 
     %% Gateway Routing Subsystem
-    RootGateway --> InitSession[initialize_session Function]:::control
+    RootGateway --> InitSession[initialize_session Hook Node]:::control
     InitSession --> Router[RouterAgent Intent Classifier]:::agent
     Router --> ControlEngine[control_engine Central Switchboard]:::control
     
     ControlEngine --> |ROUTE_TO_CHAT| FastAgent[FastConversationalAgent]:::agent
-    ControlEngine --> |ROUTE_TO_RESEARCH| Retrieval[RetrievalAgent Orchestrator]:::agent
+    ControlEngine --> |ROUTE_TO_RESEARCH| ResearchAgent[ResearchAgent Orchestrator]:::agent
 
     %% Research Pipeline Processing
     subgraph Research_Execution_Pipeline ["Research Execution Subgraph Loop (app/agent.py)"]
-        %% Atomic Tools
         subgraph Tool_Registry ["Atomic Core Tools Registry (app/tools.py)"]
-            Retrieval --> T1[graph_rag_retrieval: Vector & Graph Hop]:::tool
-            Retrieval --> T2[web_search: Search Engine Deep-Scraper]:::tool
+            ResearchAgent --> T1[graph_rag_retrieval: Vector & Direct Parent Deduplicator]:::tool
+            ResearchAgent --> T2[web_search: Cleaned Organic Deep-Scraper]:::tool
         end
-        
-        Retrieval --> Synthesis[SynthesisAgent Technical Reporter]:::agent
     end
 
     %% Presentation Layer (Unified Token Output Streaming to Frontend)
-    FastAgent --> |2a. Event Text Token Stream Payload| StreamFilter[Gradio stream_nexa_response Function]:::output
-    Synthesis --> |2b. Event Text Token Stream Payload| StreamFilter
+    FastAgent --> |2a. Event Text Token Stream| StreamFilter[Gradio stream_nexa_response]:::output
+    ResearchAgent --> |2b. Event Text Token Stream| StreamFilter
     
-    StreamFilter --> |3. Filter Out Routing Tokens & Token Aggregation| UICanvas[Final User Canvas Chat Bubble]:::client
-    UICanvas --> |4. Renders Clean Markdown Output on Screen| EndUserNode((Active End-User UI Viewports)):::client
+    StreamFilter --> |3. Token Aggregation & Filter| UICanvas[User Canvas Chat Bubble]:::client
+    UICanvas --> |4. Renders Clean Output| EndUserNode((Active End-User UI Viewports)):::client
 
     %% Ingestion Lane Setup
     DataFolder --> IngestWorkflow[IngestionPipeline Workflow]:::workflow
@@ -93,14 +89,13 @@ graph TD
     ChromaStore -.-> T1
     Neo4jStore -.-> T1
 
-
 ```
 
 ---
 
 ## 2. Minimalist Flat Project Layout
 
-The repository utilizes an optimized, flat file topology structure designed to keep folder levels at a minimum for simple execution overhead tracking:
+The repository utilizes an optimized, flat file topology structure designed to keep folder nesting levels to a minimum for transparent execution tracking on local MacBook workspaces:
 
 ```text
 nexusmind-adk/                             # Root workspace repository
@@ -125,11 +120,12 @@ nexusmind-adk/                             # Root workspace repository
 │   ├── neo4j_data/                        # Neo4j DBMS authorization and transaction databases
 │   ├── pg_data/                           # Relational layer volume cache
 │   └── redis_data/                        # Volatile task state cache arrays
+├── scripts/  
+|   └── ingest.py                          # Streamlined manual CLI entry point triggering parsing passes
 │
 └── app/                                   # Unified Core Backend Workspace Module
     ├── __init__.py                        # Package init exports
     ├── agent.py                           # Central Graph Topology, Control Switchboard, and Agent definitions
-    ├── ingest.py                          # Streamlined manual CLI entry point triggering parsing passes
     ├── ingest_pipeline.py                 # Core background multi-block parsing ingestion pipeline loop
     ├── services.py                        # Programmatic database connectors & CPU-Bound parsing infrastructure
     └── tools.py                           # High-reliability Retrieval & Web Deep-Scraping Toolsets
@@ -140,9 +136,31 @@ nexusmind-adk/                             # Root workspace repository
 
 ## 3. Granular Pipeline Engineering Details
 
-### 3.1 Background Hierarchical Ingestion Pipeline (`app/ingest_pipeline.py`)
+### 3.1 Central Routing & Direct Retrieval Loop (`app/agent.py`)
 
-To prevent large manuals from breaking local memory limits, text formatting is split away from the models. The orchestrator invokes `pdf_processor.slice_hierarchical_chunks()` to window strings programmatically on the **CPU**. It builds Parent context blocks (~2,000 characters) and Child sub-chunks (~400 characters, 100 overlap) in milliseconds before triggering the active model nodes loop.
+When an inquiry enters the runtime dashboard, it passes through an interleaved switchboard that guarantees zero context drift and completely isolates data references:
+
+#### The Agent Chain:
+
+1. **`initialize_session` [Hook Node]**: Coerces incoming raw data payloads safely into a clean string primitive, preventing nested token dictionary objects (`parts=[Part(...)]`) from bleeding down into agent parameter spaces, and caching the query in `ctx.state["user_query"]`.
+2. **`RouterAgent`**: Performs a dynamic textual classification to verify intent, returning a single token string (`CHAT_PATH` or `RESEARCH_PATH`).
+3. **`control_engine` [Central Orchestration Switch]**: Evaluates the routing classification string token. It intercepts the transfer loop, extracts the pristine user query string from the state cache, and issues a framework `Event` signal.
+4. **`FastConversationalAgent`**: Catches simple greetings to generate fast, warm responses, completely bypassing database queries.
+5. **`ResearchAgent`**: The primary analytical powerhouse. It executes the tools directly, ingests dense technical payloads concurrently, filters for semantic relevance against the target query, and generates a structured plain bulleted output.
+
+```text
+🔒 ResearchAgent Responding Laws:
+- Output must use plain bullet points ONLY. No Markdown headers (# or ##), bold section dividers, or asterisks block layers.
+- Inline body text must stay completely clean. It must not contain brackets, source tokens, or raw URLs.
+- Citations, target Child/Parent hashes, and clean scraped website links are pushed to a dedicated references footer.
+
+```
+
+---
+
+### 3.2 Background Hierarchical Ingestion Pipeline (`app/ingest_pipeline.py`)
+
+To process large files efficiently without exhausting local memory limits, text formatting is managed programmatically on the CPU. The orchestrator invokes `pdf_processor.slice_hierarchical_chunks()` to construct parent segments (~2,000 characters) and child fragments (~400 characters, 100 overlap) in milliseconds.
 
 ```mermaid
 graph LR
@@ -160,44 +178,28 @@ graph LR
 
 ```
 
-#### The Agent Chain:
+#### Truncated JSON Fault Recovery
 
-1. **`EntityExtractorAgent`**: Mines technical domain concepts from each targeted text window, forcing a strict JSON dictionary response structure: `{"entities": [{"name": "X", "type": "Y"}]}`.
-2. **`clean_and_parse_extraction` [Transformation Node]**: Intercepts the raw extraction token output, cleanly strips backticks or conversation leakages produced by smaller local models, parses it into an active Python list array, and safeguards the context chain before database synchronization.
-3. **`IndexerAgent`**: The database transaction coordinator. It invokes your `save_concept_mention` graph tool to link the newly mined term nodes directly back to the active reference `chunk_id`.
+Because local models can experience mid-token text truncations, the `clean_and_parse_extraction` hook node runs an in-memory **Structural JSON Fault Recovery Layer** right before standard compilation.
 
----
-
-### 3.2 Central Routing & Retrieval Funnel Loop (`app/agent.py`)
-
-When an inquiry enters the main app runtime chat interface, it passes through an interleaved multi-database switchboard to solve context drift and eliminate tracking data loss:
-
-#### The Agent Chain:
-
-1. **`initialize_session` [Hook Node]**: Captures the raw user query at the absolute entry point, securely writing it into the active tracking scratchpad memory (`ctx.state["user_query"]`).
-2. **`RouterAgent`**: Performs a dynamic textual classification to verify user intent, outputting a single target keyword tag (`CHAT_PATH` or `RESEARCH_PATH`).
-3. **`control_engine` [Central Orchestration Switch]**: Evaluates the classification text directly as an input parameter variable, instantly dispatching a framework execution `Event(route="...")` transfer signal.
-4. **`FastConversationalAgent`**: Catches simple text inputs (e.g., greetings, short expressions) to generate low-latency friendly responses, bypassing deep infrastructure layers completely.
-5. **`RetrievalAgent`**: Triggered exclusively for deep analytical queries. It maps the query parameter and simultaneously executes `graph_rag_retrieval` and `web_search` in parallel to maximize information density.
-6. **`SynthesisAgent`**: Gathers raw database logs and internet scrape payloads, fully integrates and deduplicates overlapping data points, strips system technical metadata names from the text stream, and renders a professional Markdown response embedded with explicit inline citations.
+It evaluates string balance, closes unclosed quotes, trims hanging key assignments (`"type": "Technolog`), and dynamically balances missing brackets (`}` or `]`). This prevents standard `json.loads()` parser exceptions from interrupting background ingestion flows.
 
 ---
 
 ## 🛠️ 4. Atomic Core Tools Subsystem (`app/tools.py`)
 
-Every tool definition includes explicit `print()` telemetry streaming trackers so you can monitor records hitting your databases in real time from your terminal console.
-
 ### 4.1 `graph_rag_retrieval(query)`
 
-* **Vector Step:** Performs a spatial vector proximity sweep using `nomic-embed-text` against ChromaDB to identify the top nearest-neighbor child chunk IDs.
-* **Graph Step:** Takes the matching chunk IDs, launches an advanced multi-hop Cypher traversal query in Neo4j, climbs up to the Parent block path, and extracts connected metadata terms instantly.
-* **Schema-Defensive Routing:** Employs bi-directional edge fallbacks (`-[:CHILD_OF|PARENT_OF|PART_OF]*..1-`) and Cypher `coalesce()` properties (`p.text`, `p.content`, `p.body`) to prevent DBMS layout mismatch warnings.
+* **Vector Lookup:** Executes a spatial similarity proximity sweep against ChromaDB via `nomic-embed-text` to isolate top nearest-neighbor child chunk IDs.
+* **Upward Target Graph Traversal:** Injects matching chunk IDs into an explicit single-direction upward Cypher query matching `-[:CHILD_OF]->`. This guarantees the engine only crawls upward to fetch the parent text block and blocks bi-directional sideways paths from pulling unrelated sibling fragments.
+* **In-Memory Python Deduplication Layer:** Tracks parent document hashes inside an in-memory execution loop array (`seen_parent_ids`). If multiple child fragments point back to the same parent text block, the tool prints the 2,000-character context exactly once. Subsequent duplicates are automatically omitted (`[OMITTED DUP - SEE ABOVE FOR CONTEXT]`), saving thousands of context tokens.
 
 ### 4.2 `web_search(query)`
 
-* **Engine Step:** Dispatches a structured `POST` form-vector lookup parameter request directly against public directory indexes (`html.duckduckgo.com`).
-* **Deep Scrape Step:** Extracts target link paths and drops them right into a synchronous, high-speed `_fetch_url_text_sync` function block.
-* **Extraction Stack:** Leverages **`trafilatura.extract()`** first to scrape clean, main-text document blocks while rejecting sidebars, headers, and visual layout noise. Falls back to a custom BeautifulSoup tag-decomposer pipeline (`"script"`, `"style"`, `"noscript"`, `"header"`, `"footer"`, `"svg"`) if necessary.
+* **Organic Index Isolation:** Queries `html.duckduckgo.com` with clean search terms.
+* **Dynamic Ad-Shield Domain Filters:** Parses every target landing link using Python's native `urlparse` module. It matches network locations (`netloc`) and paths (`path`) to drop advertisement tracker scripts (`/y.js`, `aclick`, `ad_domain`, `doubleclick`) instantly.
+* **Parameter Scrubber:** Strips tracking variables (like `?utm_source=...` or `&click_metadata=...`) from organic target links using `urlunparse` to produce short, pristine citation URLs.
+* **High-Density Scraper:** Feeds clean URLs to **`trafilatura.extract()`** first to strip away sidebars, headers, and footer noise. It features a custom BeautifulSoup tag-decomposer fallback (`"script"`, `"style"`, `"noscript"`, `"header"`, `"footer"`, `"svg"`) to handle protected domains cleanly.
 
 ---
 
@@ -205,7 +207,7 @@ Every tool definition includes explicit `print()` telemetry streaming trackers s
 
 ### 1. Configure the Environment Specs
 
-Ensure a `.env` file exists in your project's root workspace directory containing these configuration settings:
+Ensure a `.env` file exists in your workspace directory containing these configuration settings:
 
 ```bash
 EXECUTION_MODE="LOCAL"
@@ -225,7 +227,7 @@ NEO4J_PASSWORD="your_secure_neo4j_password"
 
 ### 2. Install Dependencies
 
-Install the required technical libraries into your virtual environment (enforcing high-speed extraction libraries):
+Install the virtual environment package requirements:
 
 ```bash
 uv add gradio httpx trafilatura beautifulsoup4 pydantic
@@ -243,20 +245,20 @@ docker compose up -d
 
 ### 4. Ingest PDF Documents via CLI
 
-Ingestion is executed manually via the terminal, completely decoupling your database writes from your frontend interface. To ingest a local PDF document asset, run:
+To split, map, extract, and index a local PDF asset file, run the manual command-line tool:
 
 ```bash
-uv run -m app.ingest data/ML_note.pdf
+uv run -m scripts.ingest data/ML_note.pdf
 
 ```
 
 ### 5. Boot the Interactive Web Interface Dashboard
 
-Launch the clean Gradio interface workspace. It uses native `gr.ChatInterface` properties to run synchronous streaming loops directly to the viewport:
+Launch the backend routing network and open the interactive client canvas:
 
 ```bash
 uv run gradio_app.py
 
 ```
 
-Once running, navigate to **`http://127.0.0.1:7860`** inside your browser window to research your grounded knowledge pools.
+Once running, navigate to **`http://127.0.0.1:7860`** inside your browser window to test your unified, low-latency research engine.

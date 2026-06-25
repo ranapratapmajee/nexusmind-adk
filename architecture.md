@@ -9,6 +9,8 @@ NexusMind solves this by splitting storage responsibilities based on mathematica
 | **ChromaDB** | Vector Space | Mathematical similarity math ($K$-Nearest Neighbors) via dense embeddings. | **Child Chunks**: Tiny text strings (~400 characters) built for fast semantic matching. |
 | **Neo4j** | Knowledge Graph | Relational graph traversals, global context preservation, and semantic lineage tracking. | **Parent Chunks** (~2,000 characters) & **Explicit Entity Hubs** (`CONCEPT`, `TECHNOLOGY`, `SYSTEM`). |
 
+The runtime layer collapses multi-agent overhead down to a single **ResearchAgent** running atomic Python tools directly. This completely eliminates intermediate LLM latency steps, handles large documents cleanly, and filters out ad tracker URLs natively at the system boundary.
+
 ---
 
 ## 📐 2. Phase 1: Knowledge Graph Construction (Ingestion Pipeline)
@@ -44,11 +46,11 @@ The system loads unformatted asset files (e.g., `ML_note.pdf`) through `pypdf`. 
 
 ### 🔹 Step 2.2: Deterministic Hierarchical Chunking
 
-Instead of slicing text blindly, the system creates an explicit **Parent-Child Parentage Mesh** using sliding string boundaries:
+Instead of slicing text blindly, the system creates an explicit **Parent-Child Parentage Mesh** using sliding string boundaries on the CPU:
 
-1. **Parent Chunks:** The engine extracts structural text blocks with a maximum window size of 2,000 characters. These blocks preserve complete logical modules (chapters, long medical diagnostic flows, complete algorithmic proofs).
-2. **Child Chunks:** Inside each Parent window, the system creates smaller, sub-slice text fragments of 400 characters, applying a 100-character overlap safety barrier.
-3. **Standardized ID Generation:** To maintain reference integrity between entirely separate databases, a persistent key string is deterministically minted using the uppercase source asset prefix:
+1. **Parent Chunks:** The engine extracts structural text blocks with a maximum window size of 2,000 characters to preserve complete logical modules (chapters, long architectural proofs).
+2. **Child Chunks:** Inside each Parent window, the system creates smaller sub-slice text fragments of 400 characters, applying a 100-character overlap safety barrier.
+3. **Standardized ID Generation:** Persistent key strings are deterministically minted using the uppercase source asset prefix:
 * Parent ID: `[FILENAME]-PARENT-[INDEX]` (e.g., `ML_NOTE-PARENT-001`)
 * Child ID: `[FILENAME]-CHUNK-[INDEX]` (e.g., `ML_NOTE-CHUNK-001`)
 
@@ -56,10 +58,10 @@ Instead of slicing text blindly, the system creates an explicit **Parent-Child P
 
 ### 🔹 Step 2.3: Layer 1 Deterministic Database Storage
 
-Before running any AI models, the raw text fragments are saved using direct Python infrastructure tools to guarantee 100% structural baseline integrity:
+Before running any AI models, raw text fragments are saved using direct Python infrastructure tools to guarantee 100% structural baseline integrity:
 
-* **ChromaDB Commit:** The child fragment's text is converted into a vector embedding array by querying the local Ollama embedding API (`/api/embeddings`). The record is committed along with its text body and a `parent_id` metadata tag.
-* **Neo4j Structural Commit:** A Cypher transaction writes the core layout nodes. It merges the child node, merges the parent node, and writes a permanent structural hierarchy line linking them:
+* **ChromaDB Commit:** The child fragment's text is converted into a vector embedding array by querying the local Ollama embedding API (`/api/embeddings`) using `nomic-embed-text`. The record is committed along with its text body and a `parent_id` metadata tag.
+* **Neo4j Structural Commit:** A Cypher transaction writes the core layout nodes, merging the child and parent nodes while mapping a permanent structural hierarchy:
 ```cypher
 (ChildChunk:DocumentNode)-[:CHILD_OF]->(ParentChunk:DocumentNode)
 
@@ -67,148 +69,144 @@ Before running any AI models, the raw text fragments are saved using direct Pyth
 
 
 
-### 🔹 Step 2.4: Layer 2 Agentic Semantic Extraction (How Entities are Decided)
+### 🔹 Step 2.4: Layer 2 Agentic Semantic Extraction
 
-Once the layout skeleton is secured in the graph, the system passes the text to the multi-agent orchestration layer to build the **Semantic Index**.
+Once the skeleton is secured, the multi-agent orchestration layer builds the **Semantic Index**.
 
-#### 🤖 The Entity Decision Matrix (LLM Logic)
-
-The `EntityExtractorAgent` runs against a local local 7B model. It receives a packaged text payload structured as:
-
-```text
-CHUNK_ID: ML_NOTE-CHUNK-001
-CHUNK_TEXT: "Deep Learning uses neural networks like CNNs to automate feature extraction..."
-
-```
-
-The model evaluates nouns and technical abstractions against strict taxonomic criteria to decide what qualifies as an explicit entity node:
-
-1. **`TECHNOLOGY`:** Must be an actionable software engineering stack, a specific named algorithm model framework, or a core toolchain (e.g., `NEURAL NETWORKS`, `CNN`, `CHROMADB`, `PYTORCH`).
-2. **`SYSTEM`:** Must represent a high-level architectural environment, an operational platform, or an interconnected infrastructural block (e.g., `VECTOR STORE`, `OPERATING SYSTEM`, `RAG PIPELINE`).
-3. **`CONCEPT`:** Must represent an abstract underlying theory, a mathematical foundation, a metric standard, or a domain-specific phenomenon (e.g., `FEATURE EXTRACTION`, `BACKPROPAGATION`, `OPTIMIZATION`, `VARIANCE`).
-
-General conversational phrases, common adjectives, and weak nouns are discarded by the model's instruction constraints.
-
-#### 🔗 The Secure Token Integration Bridge
-
-To prevent smaller local models from losing track of variables between execution steps, the workflow uses a **Token-Enclosed Session Tracking** pattern.
-
-The engine embeds the exact destination chunk ID into the isolated session identifier tag (`session--[CHUNK_ID]--[UUID]`). When the `clean_and_parse_extraction` hook node executes, it safely extracts the target chunk ID from this session token string using direct Python code, matches it with the validated entity JSON payload, and calls the Neo4j driver.
-
-This approach completely bypasses the risk of model tool-calling failures and connects the extracted entities straight to the matching `DocumentNode` chunk via a `[:MENTIONED_IN]` relationship line.
+* **The Entity Decision Matrix (LLM Logic):** The `EntityExtractorAgent` runs against a local 7B model. It receives a packaged text payload and evaluates abstractions against strict taxonomic criteria (`TECHNOLOGY`, `SYSTEM`, `CONCEPT`). Common conversational phrases are discarded.
+* **The Secure Token Integration Bridge:** To prevent smaller models from losing track of variables, the workflow uses a **Token-Enclosed Session Tracking** pattern. The engine embeds the destination chunk ID into an isolated session identifier tag (`session--[CHUNK_ID]--[UUID]`). The `clean_and_parse_extraction` transformation node safely extracts the target chunk ID from this session token string using direct Python code, matches it with the validated entity JSON payload, and writes an incoming `[:MENTIONED_IN]` relationship line.
 
 ---
 
-## 🔍 3. Phase 2: The Hybrid GraphRAG Search Engine
+## 🔍 3. Phase 2: The High-Speed Hybrid Search Engine
 
-When a user submits a question to the system, query resolution transitions from geometric vector routing to multi-hop graph reasoning.
+When a user submits a question to the system, query resolution transitions from geometric vector routing to multi-hop graph reasoning and organic live web scraping.
 
 ```text
 [ User Prompt Input ] ➔ "Explain Deep Learning Feature Extraction"
        │
-       ▼ (Step 3.1: Dense Retrieval)
-[ Query Vector Array ] ──► KNN Scan ──► Top K Hit: `ML_NOTE-CHUNK-001`
-       │
-       ▼ (Step 3.2: Multi-Hop Graph Traversal)
-   Execute Combined Cypher Query on Neo4j
-       ├───► Hop 1: Match `ML_NOTE-CHUNK-001`
-       ├───► Hop 2 Upward: Follow `[:CHILD_OF]` ➔ Pulls broad Parent Context Frame
-       └───► Hop 3 Horizontal: Follow `[:MENTIONED_IN]` ➔ Pulls related Semantic Nodes
-       │
-       ▼ (Step 3.3: Prompt Context Synthesis)
-[ Enriched Grounded Context Context Prompt Template ]
+       ▼ (Step 3.1: Session Initialization & Routing)
+[ Input Sanitization Hook ] ➔ Coerces raw matrix objects into clean string primitives
        │
        ▼
-[ Local 7B Generation Execution Turn ] ➔ High-Precision, Hallucination-Free Answer
+[ RouterAgent Switchboard ] ➔ Classifies intent (CHAT_PATH vs. RESEARCH_PATH)
+       │
+       ▼ (ROUTE_TO_RESEARCH)
+[ ResearchAgent Orchestrator ] ➔ Launches parallel Python tool execution
+       ├───► graph_rag_retrieval(query)
+       │         ├── ChromaDB vector similarity lookup (Top K nearest-neighbor IDs)
+       │         └── Neo4j strict single-direction upward hop: `-[:CHILD_OF]->`
+       │         └── Python In-Memory Deduplication: Suppresses duplicate parent text payload loops
+       │
+       └───► web_search(query)
+                 ├── Form-vector POST query to public index directories
+                 ├── urlparse ad-shield domain filter: Drops tracking logs (/y.js, aclick)
+                 └── urlunparse query parameter scrubber + trafilatura core main-text extract
+       │
+       ▼ (Step 3.2: Context Synthesis & Generation Turn)
+[ Flat Plain Bullet Summary ] ➔ Fully detailed inline facts completely stripped of brackets/URLs
+[ References Footer Block ]  ➔ Isolated listing of all parent chunk IDs and clean website domains
 
 ```
 
-### 🔹 Step 3.1: Dense Mathematical Retrieval
+### 🔹 Step 3.1: Session Initialization & Input Sanitization
 
-1. The user's query text string is converted into a numeric vector array via the system's active embedding endpoint.
-2. The system executes a vector similarity scan against the ChromaDB collection using a $K$-Nearest Neighbors search.
-3. ChromaDB identifies the exact micro-text segment with the highest semantic match and returns its persistent tracking key string (e.g., `ML_NOTE-CHUNK-001`).
+To prevent nested JSON dictionary tokens (`parts=[Part(...)]`) from bleeding into the agent parameters, the execution turn targets a dedicated initialization node:
 
-### 🔹 Step 3.2: Multi-Hop Graph Traversal
+* **The Hook Node (`initialize_session`)**: Captures the raw runtime payload, evaluates it for text properties, extracts a clean string primitive, and commits it securely to `ctx.state["user_query"]`.
+* **The Orchestration Switch (`control_engine`)**: Pulls the clean string primitive from the state cache, bypasses multi-stage agentic middlemen, and routes execution directly to the tool-equipped `ResearchAgent`.
 
-The retrieved chunk key is passed immediately to the Neo4j engine, which executes a multi-hop traversal to gather surrounding context:
+### 🔹 Step 3.2: Execution of Atomic Clean Tools
 
-* **The Structural Upward Hop:** The engine targets the child chunk node (`id: "ML_NOTE-CHUNK-001"`) and follows its outgoing `-[:CHILD_OF]->` relationship edge to fetch its 2,000-character `ParentChunk`. This restores the broader paragraphs, neighboring text, and formulas that were cut off during chunking.
-* **The Conceptual Horizontal Hop:** Simultaneously, the graph traces all incoming `<-[:MENTIONED_IN]-` relationship paths hitting that exact chunk. This pulls back every explicit entity node (`CONCEPT`, `TECHNOLOGY`, `SYSTEM`) connected to that text block across the entire database.
+#### 🚀 1. GraphRAG Traversal with Python In-Memory Deduplication
 
-### 🔹 Step 3.3: Context Synthesis & Generation
+The tool targets the isolated string query, generates a dense mathematical vector, and pulls the nearest child nodes from ChromaDB. It passes these IDs to Neo4j using a strict single-direction upward traversal layout:
 
-The application layer intercepts the graph outputs and formats them into an enriched prompt context structure:
-
-```markdown
-[SYSTEM ARCHITECTURE PROMPT TEMPLATE]
-You are a grounded analytical assistant. Answer the user query using ONLY the verified structural context below.
-
-### VERIFIED DOCUMENT GEOMETRY (GLOBAL CONTEXT FRAME)
-"""
-[Inserts the 2000-character text string of the recovered Parent Chunk]
-"""
-
-### ASSOCIATED KNOWLEDGE METADATA NODES
-- Active Technologies Found: [E.g., CNN, NEURAL NETWORKS]
-- Mined Foundational Concepts: [E.g., FEATURE EXTRACTION, DEEP LEARNING]
-
-### USER QUERY
-{user_query}
+```cypher
+MATCH (c:DocumentNode {id: $chunk_id})
+OPTIONAL MATCH (c)-[:CHILD_OF]->(p:DocumentNode)
+OPTIONAL MATCH (entity)-[:MENTIONED_IN]->(c)
+RETURN DISTINCT p.id AS parent_id, coalesce(p.text, p.content, p.body, '') AS parent_text, 
+                collect(DISTINCT {name: entity.id, type: labels(entity)[0]}) AS concepts
 
 ```
 
-This enriched template is sent directly to the local model. Because the context window is backed by both localized text matches and the broader parent paragraph, the model can synthesize highly accurate answers with **zero hallucinations**.
+* **Why this prevents flooding:** By placing an explicit directional arrow (`-[:CHILD_OF]->`), Neo4j is physically blocked from wandering sideways or pulling down sibling fragments.
+* **The Python Deduplication Guard:** To prevent identical 2,000-character parent paragraphs from hitting the local context window multiple times, an in-memory loop tracking set (`seen_parent_ids`) is introduced. If a parent block has already been read during the execution cycle, its body text is suppressed (`[OMITTED DUP - SEE ABOVE FOR CONTEXT]`), while compiling any newly uncovered technical metadata tags.
+
+#### 🌐 2. Web Search with Ad-Shield Domain Filters
+
+The scraper queries `html.duckduckgo.com` and filters raw results through a dual validation engine:
+
+* **The Ad Shield Tracker:** Parses incoming candidate links using `urllib.parse.urlparse`. It intercepts network locations (`netloc`) and path strings (`path`) to drop advertisement redirect blocks (`/y.js`, `aclick`, `ad_domain`, `doubleclick`) instantly.
+* **The Parameter Scrubber:** Organic targets are reconstructed using `urlunparse` to drop messy query strings (`?utm_source=...`), protecting context length.
+* **The Main-Text Extractor:** Cleaned URLs are processed by `trafilatura.extract()` to isolate technical paragraph contents while completely discarding sidebars, headers, or layout wrappers.
+
+### 🔹 Step 3.3: Context Synthesis & Response Generation Turn
+
+The `ResearchAgent` receives these dense, cleaned, non-repetitive tool strings. It maps them against its target goal instructions using strict styling laws designed for local models (`qwen2.5-coder:7b`):
+
+1. **Fact Isolation:** Inline bullet points summarize technical findings comprehensively, fully stripped of brackets, citation tags, or raw URLs.
+2. **References Consolidation:** All source details, chunk hashes, and domain locations are pushed cleanly to the bottom of the response under an isolated references footer.
 
 ---
 
-## 🛠️ 4. Neo4j Administrative & Visualization Queries
+## 📊 4. Neo4j Administrative & Visualization Queries
 
-Execute these queries inside your Neo4j Browser dashboard (`http://localhost:7474`) to audit your index health and inspect your structural graphs.
+Execute these validation queries inside your Neo4j Browser dashboard (`http://localhost:7474`) to monitor index profiles and audit your hierarchy health.
 
-### Query 4.1: View Everything at Once (Global Topology Scan)
+### 🔹 Total Document Node Count Matrix
 
-Visualizes your entire database network, showing your parent clusters radiating out to child chunks, and the concept nodes anchoring them:
-
-```cypher
-MATCH (n)
-OPTIONAL MATCH (n)-[r]->(m)
-RETURN n, r, m
-LIMIT 300;
-
-```
-
-### Query 4.2: Verify Entity-to-Chunk Semantic Edges
-
-Isolates and validates your agentic mining layer by pulling only your explicit taxonomy tags and their relationship lines pointing to text frames:
-
-```cypher
-MATCH (entity)-[r:MENTIONED_IN]->(chunk:DocumentNode)
-WHERE entity:CONCEPT OR entity:TECHNOLOGY OR entity:SYSTEM
-RETURN entity, r, chunk
-LIMIT 50;
-
-```
-
-### Query 4.3: Trace the Full 3-Tier Retrieval Path
-
-Tests the exact multi-hop lookup path executed by your runtime RAG retrieval agent (Entity $\rightarrow$ Chunk $\rightarrow$ Parent):
-
-```cypher
-MATCH (entity)-[r1:MENTIONED_IN]->(child:DocumentNode)-[r2:CHILD_OF]->(parent:DocumentNode)
-WHERE child.type = 'ChildChunk' AND parent.type = 'ParentChunk'
-RETURN entity, r1, child, r2, parent
-LIMIT 30;
-
-```
-
-### Query 4.4: System Health Audit (Label Node Counts)
-
-An analytical query that counts your data distribution across your core database types to ensure the extraction pipeline is balanced:
+Run this to see a quick summary breakdown of every structural node label committed to your instance.
 
 ```cypher
 MATCH (n)
-RETURN labels(n) AS LabelType, count(n) AS NodeCount
-ORDER BY NodeCount DESC;
+RETURN labels(n) AS Node_Label, count(n) AS Total_Nodes
+ORDER BY Total_Nodes DESC;
+
+```
+
+### 🔹 Ingestion Integrity Check: Unlinked Child Chunks
+
+Every `ChildChunk` must have an outgoing edge to a parent text block. This query isolates any broken orphan nodes that failed step 2.3 of your pipeline.
+
+```cypher
+MATCH (c:DocumentNode)
+WHERE NOT (c)-[:CHILD_OF]->(:DocumentNode)
+RETURN c.id AS Orphan_Chunk_ID, coalesce(c.text, c.content)[:100] AS Snippet;
+
+```
+
+### 🔹 Inspect Parent-to-Child Cluster Hierarchy
+
+Tracks a specific document asset to ensure your sliding string boundaries mapped parentage correctly.
+
+```cypher
+MATCH (p:DocumentNode) WHERE p.id CONTAINS 'ML_NOTE' AND p.id CONTAINS 'PARENT'
+MATCH (c:DocumentNode)-[:CHILD_OF]->(p)
+RETURN p.id AS Parent_ID, count(c) AS Attached_Child_Chunks, collect(c.id) AS Child_IDs
+ORDER BY Parent_ID ASC;
+
+```
+
+### 🔹 Simulate Phase 2 Multi-Hop Search Traversal
+
+Simulates what your `ResearchAgent` encounters inside the horizontal and vertical graph hops during an active retrieval execution turn.
+
+```cypher
+MATCH (c:DocumentNode {id: "ML_NOTE-CHUNK-001"})
+MATCH (c)-[r1:CHILD_OF]->(p:DocumentNode)
+OPTIONAL MATCH (entity)-[r2:MENTIONED_IN]->(c)
+RETURN c, r1, p, entity, r2;
+
+```
+
+### 🔹 Clear Ingested Graph Records
+
+Wipes active structural and semantic indexes to run a clean ingestion cycle over your data folder without breaking system database configurations:
+
+```cypher
+MATCH (n)
+DETACH DELETE n;
 
 ```
