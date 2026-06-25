@@ -228,7 +228,7 @@ NEO4J_PASSWORD="your_secure_neo4j_password"
 Install the required technical libraries into your virtual environment (enforcing high-speed extraction libraries):
 
 ```bash
-pip install gradio httpx trafilatura beautifulsoup4 pydantic
+uv add gradio httpx trafilatura beautifulsoup4 pydantic
 
 ```
 
@@ -246,7 +246,7 @@ docker compose up -d
 Ingestion is executed manually via the terminal, completely decoupling your database writes from your frontend interface. To ingest a local PDF document asset, run:
 
 ```bash
-python app/ingest.py data/rag_book.pdf
+uv run -m app.ingest data/ML_note.pdf
 
 ```
 
@@ -255,7 +255,7 @@ python app/ingest.py data/rag_book.pdf
 Launch the clean Gradio interface workspace. It uses native `gr.ChatInterface` properties to run synchronous streaming loops directly to the viewport:
 
 ```bash
-python gradio_app.py
+uv run gradio_app.py
 
 ```
 

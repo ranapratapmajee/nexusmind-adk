@@ -1,5 +1,6 @@
 # filepath: app/services.py
 import io
+import re
 import logging
 from typing import List, Dict, Any
 import requests
@@ -171,14 +172,34 @@ class GraphDBService:
             logger.error(f"Neo4j write transaction crashed: {str(e)}")
             raise e
 
-    def save_concept_mention(self, entity_name: str, entity_type: str, chunk_id: str):
+    def save_concept_mention(self, name: str, type: str, target_chunk_id: str):
         """
-        Binds extracted conceptual entity nodes directly to a standardized child chunk.
-        Enables Layer-2 expansions completely decoupled from document geometry.
+        🌐 DYNAMIC ALGORITHMIC NORMALIZATION:
+        Binds extracted conceptual entity nodes directly to their chunk source.
+        Cleans string casing, text variations, and type drift dynamically
+        without using hardcoded dictionaries—making it compatible with any PDF domain.
         """
-        safe_label = "".join([c for c in entity_type if c.isalnum()]).upper()
-        clean_entity_id = entity_name.strip().upper()
+        chunk_id = str(target_chunk_id).strip()
+        if not name or not chunk_id:
+            return
 
+        # 🧼 Step 1: Normalize capitalization and strip outer spaces
+        clean_name = str(name).strip().upper()
+        
+        # 🧼 Step 2: Strip inline text noise (e.g., parentheses, special characters)
+        # Converts "Regularization (L1 >> Lasso)" -> "REGULARIZATION L1 LASSO"
+        clean_name = re.sub(r'[^\w\s-]', '', clean_name)
+        clean_name = re.sub(r'\s+', ' ', clean_name).strip()
+
+        # 🧼 Step 3: Sanitize and validate incoming node labels
+        raw_label = str(type).strip().upper()
+        safe_label = "".join([c for c in raw_label if c.isalnum()]).upper()
+        
+        # Force a strict schema fallback to avoid creating uncontrolled label variations
+        if safe_label not in ["CONCEPT", "TECHNOLOGY", "SYSTEM"]:
+            safe_label = "CONCEPT"
+
+        # 💎 Step 4: Transaction execution using exact target identifiers
         cypher_query = f"""
         MERGE (e:{safe_label} {{id: $entity_id}})
         WITH e
@@ -187,9 +208,9 @@ class GraphDBService:
         """
         try:
             with self._driver.session() as session:
-                session.run(cypher_query, entity_id=clean_entity_id, chunk_id=chunk_id)
+                session.run(cypher_query, entity_id=clean_name, chunk_id=chunk_id)
         except Exception as e:
-            logger.error(f"Neo4j concept linkage failure: {str(e)}")
+            logger.error(f"Neo4j dynamic linkage failure: {str(e)}")
 
 
 # =========================================================

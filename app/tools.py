@@ -78,8 +78,10 @@ def graph_rag_retrieval(query: str) -> str:
         collection = vector_store.get_or_create_collection()
         query_vector = vector_store._generate_embedding(query_clean)
         results = collection.query(query_embeddings=[query_vector], n_results=2)
-        documents = results.get("documents", [[]])[0]
-        ids = results.get("ids", [[]])[0]
+        
+        # Extract the collection layers safely out of the first matrix list envelope
+        documents = results.get("documents", [[]])[0] if results.get("documents") else []
+        ids = results.get("ids", [[]])[0] if results.get("ids") else []
     except Exception as e:
         logger.error(f"❌ Chroma runtime read error: {str(e)}")
         return "Internal vector document index lookup timed out."
@@ -99,7 +101,10 @@ def graph_rag_retrieval(query: str) -> str:
                     collect(DISTINCT {name: coalesce(entity.id, entity.name, ''), type: labels(entity)}) AS concepts
     """
     
-    for chunk_id, child_text in zip(ids, documents):
+    for raw_chunk_id, child_text in zip(ids, documents):
+        # 🌟 FIXED: Coerce the element directly to a clean string primitive to prevent list reference bleeding
+        chunk_id = str(raw_chunk_id).strip()
+        
         narrative.append(f"\n[Source Citation ID: {chunk_id}]")
         narrative.append(f"Specific matching fact: '{child_text}'")
         
@@ -117,6 +122,8 @@ def graph_rag_retrieval(query: str) -> str:
                     if valid_concepts:
                         concept_string = ", ".join(set(valid_concepts))
                         narrative.append(f" └── Connected Topical Metadata tags: {concept_string}")
+                else:
+                    logger.info(f"ℹ️ No structural links or properties resolved in Neo4j for Chunk ID: {chunk_id}")
         except Exception as e:
             logger.error(f"❌ Neo4j link query broken for {chunk_id}: {str(e)}")
             continue
@@ -155,7 +162,6 @@ def web_search(query: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     compiled_blocks = ["LIVE PUBLIC INTERNET DEEP-SCRAPE DATA:"]
     
-    # Restrict to top 2-3 deep scrapes to avoid overloading the local 7B context windows
     scraped_count = 0
     for result in soup.select(".result"):
         if scraped_count >= 3:
@@ -168,7 +174,6 @@ def web_search(query: str) -> str:
         if not href:
             continue
 
-        # 🌟 DEEP SCRAPE STEP: Jump straight into the target page text content
         deep_content = _fetch_url_text_sync(href, max_chars=3500)
         
         if deep_content:
@@ -179,7 +184,6 @@ def web_search(query: str) -> str:
                 f"Full Scraped Webpage Content:\n{deep_content}"
             )
         else:
-            # Fall back to snippet if the link failed to respond or blocked the scraper
             snippet_el = result.select_one(".result__snippet")
             fallback_snippet = _clean_text(snippet_el.get_text(" ", strip=True) if snippet_el else "")
             if fallback_snippet:
