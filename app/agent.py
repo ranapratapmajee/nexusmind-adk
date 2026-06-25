@@ -1,5 +1,6 @@
 # filepath: app/agent.py
 
+import json
 from typing import Any
 from pydantic import BaseModel, Field
 from config.settings import settings
@@ -9,15 +10,14 @@ from google.adk.models.lite_llm import LiteLlm
 from app.tools import graph_rag_retrieval, web_search
 
 local_llm = LiteLlm(model=settings.OLLAMA_MODEL)
-cloud_llm = settings.GEMINI_MODEL
-llm= local_llm
+llm = local_llm
 
 # =========================================================
-# 1. STRUCTURAL GLOBAL STATE SCHEMA
+# 1. STRUCTURAL GLOBAL STATE SCHEMA (ADK 2.0 WORKFLOW STATE)
 # =========================================================
 class AgentState(BaseModel):
-    user_query: str = Field(default="", description="The original raw text query submitted by the user.")
-    route_decision: str = Field(default="", description="The raw routing classification string produced by the LLM.")
+    user_query: str = Field(default="", description="The clean string primitive question.")
+    route_decision: str = Field(default="", description="The JSON string token produced by the router.")
 
 # =========================================================
 # 2. DEFINITION OF REFINED COHESIVE SYSTEM AGENTS (NODES)
@@ -25,12 +25,15 @@ class AgentState(BaseModel):
 
 router_agent = Agent(
     name="RouterAgent",
-    description="Dynamically classifies whether the incoming user input is a casual greeting or a research question.",
+    description="Dynamically classifies user intent and bundles output as a clean JSON payload structure.",
     model=llm,
-    instruction="""Analyze the user prompt. Determine the intent and respond with EXACTLY one word:
-    - CHAT_PATH: if the user is saying hi, hello, greeting you, or making casual pleasantries.
-    - RESEARCH_PATH: if the user is asking an informational, technical, or analytical question.
-    Do not add markdown formatting, commentary, quotes, or periods. Output ONLY the word.""",
+    instruction="""Analyze the user prompt. You must classify the intent and respond with a strict raw JSON object string matching this exact schema:
+    {
+      "decision": "CHAT_PATH" or "RESEARCH_PATH",
+      "forward_query": "The verbatim, completely unchanged user query text string"
+    }
+    
+    Do not add conversational filler, markdown formatting blocks (like ```json), or commentary. Output ONLY the raw JSON string text.""",
     output_key="route_decision"
 )
 
@@ -43,25 +46,27 @@ fast_agent = Agent(
 
 research_agent = Agent(
     name="ResearchAgent",
-    description="Executes tools directly and synthesizes data into a highly comprehensive plain bulleted report with isolated references.",
+    description="Executes tools directly and synthesizes data into an exhaustive, multi-point technical summary with clean, isolated references.",
     model=llm,
     instruction="""
-    ROLE: Expert Technical Research Synthesizer. 
+    ROLE: Senior Technical Research Systems Architect.
     
-    TARGET GOAL: Exhaustively answer the user's core query string.
+    TARGET GOAL: Provide a deeply comprehensive, highly detailed response to the active inquiry: "{user_query}"
     
-    TASK: You must call your attached tools to gather data, then combine the full text payloads from BOTH your internal knowledge base logs and your live web scraping search paths to build a comprehensive summary. Do not miss any details.
+    TASK: You must call your attached retrieval tools. You are required to fully extract, synthesize, and expand upon the technical insights returned by BOTH your internal knowledge records and your live web scrapers.
 
-    ⚙️ MANDATORY INGESTION LAWS:
-    1. Extract all definitions, structures, and statistical rules present in your tool results. 
-    2. Isolate specific technical deep learning definitions, structural layers (hidden networks, neurons), active network architectures (CNN, RNN, LSTM, Transformers, GANs), and core structural comparisons between Machine Learning vs Deep Learning.
-    3. Maximize informational density. Ensure your output contains multiple detailed bullet points explaining these architectures comprehensively.
+    ⚙️ EXHAUSTIVE DATA HARVESTING LAWS:
+    1. READ ALL TOOL SEGMENTS: Inspect every single data payload block from your tools. Do not stop reading after the first record.
+    2. RESOLVE DEDUPLICATED GRAPH CONTEXTS: If a chunk contains the label '[OMITTED DUP - SEE ABOVE FOR CONTEXT]', you must look back up at the previously printed 'Full Parent Context' block and explicitly extract its details to support the current matching fact.
+    3. MAXIMIZE CONTENT DEPTH: You are strictly forbidden from writing a short summary. Aim to produce at least 6 to 10 highly granular, technically dense, informative bullet points expanding on definitions, architectural hidden layers, components, and statistical rules.
 
-    🔒 STYLING GUIDELINES:
-    1. Output your entire response using ONLY plain bullet points. DO NOT use any Markdown headers (like # or ##), bold text section dividers, asterisks for sections, or blockquotes.
-    2. Start directly with the bulleted findings. DO NOT include introductory text, meta-commentary, or call out function parameter objects.
-    3. KEEP INLINE FACTS CLEAN: Do not place brackets, citation tags, or raw string URLs inside the core body bullet points. Keep the sentences clean.
-    4. REFERENCES SECTION: Conclude your response with explicit bullet points labeled exactly as 'REFERENCES - Source Parent ID:' and 'REFERENCES - Source Website URL:' to cleanly isolate all chunk hashes and domain strings collected at the very bottom.
+    🔒 COMPLIANCE & STYLING LAWS:
+    1. RENDER FLAT BULLETS ONLY: Your entire response must consist solely of standard, plain bullet points. You are completely restricted from using Markdown headers (such as #, ##, or ###), bold section dividers, asterisks lines, or blockquotes.
+    2. ZERO INLINE LEAKAGE: Keep the informational bullet points completely clean. You must not include any brackets, citation keys, chunk hashes, or URLs within the technical body sentences.
+    3. START IMMEDIATELY: Begin your output directly with the first technical fact. Do not use filler introductions or mention your tool workflows.
+    4. SYSTEM FOOTER REFERENCES: Conclude the flat list by dedicating the final bullet points strictly to mapping data origins using these exact literal formats:
+       - REFERENCES - Source Parent ID: [Insert all unique parent hashes found]
+       - REFERENCES - Source Website URL: [Insert all clean scraped domain links found]
     """,
     tools=[graph_rag_retrieval, web_search]
 )
@@ -72,34 +77,55 @@ research_agent = Agent(
 @node
 def initialize_session(ctx: Workflow, node_input: Any) -> Any:
     """
-    Runs at the absolute START of the conversation turn. Strips out wrapper meta-objects 
-    to extract a clean string primitive for the target query state.
+    Runs at the absolute START of the conversation turn. Safely reads the original 
+    user text from the framework context without bleeding object tracking wrappers.
     """
-    if hasattr(node_input, "text"):
-        raw_text = str(node_input.text).strip()
-    elif isinstance(node_input, dict) and "text" in node_input:
-        raw_text = str(node_input["text"]).strip()
-    else:
-        raw_text = str(node_input).strip()
+    initial_text = "N/A"
+    if hasattr(ctx, "user_content") and ctx.user_content and ctx.user_content.parts:
+        initial_text = str(ctx.user_content.parts[0].text or "").strip()
+    elif hasattr(node_input, "text"):
+        initial_text = str(node_input.text).strip()
         
-    ctx.state["user_query"] = raw_text
-    return raw_text
+    ctx.state["user_query"] = initial_text
+    return node_input
 
 @node
 def control_engine(ctx: Workflow, node_input: Any) -> Event:
     """
-    Evaluates the string token produced dynamically by the RouterAgent and handles branching control flow.
-    Enforces a clean string extraction right before passing control to prevent object bleeding.
+    ADK 2.0 Compliant Engine. Decodes the LLM's structured JSON payload, updates the state 
+    variables, and issues a pure routing Event. The graph engine handles message-passing 
+    and target token injection natively via the state schema mapping fields.
     """
-    llm_decision = str(node_input).strip().upper()
+    raw_payload_str = str(ctx.state.get("route_decision", "")).strip()
     
-    # 🧼 CRITICAL FIX: Extract the pristine string primitive from our state cache
-    clean_query_string = str(ctx.state.get("user_query", "")).strip()
+    decision_path = "RESEARCH_PATH"
+    clean_query = str(ctx.state.get("user_query", "")).strip()
 
-    if "CHAT_PATH" in llm_decision:
-        return Event(route="ROUTE_TO_CHAT", actions={"transfer_to_agent": "FastConversationalAgent"}, text=clean_query_string)
+    # Normalize response variations if the 7B model uses string markdown formatting blocks
+    if raw_payload_str.startswith("```"):
+        raw_payload_str = raw_payload_str.strip("`").replace("json", "", 1).strip()
+
+    try:
+        parsed_payload = json.loads(raw_payload_str)
+        decision_path = str(parsed_payload.get("decision", "RESEARCH_PATH")).strip().upper()
+        extracted_query = str(parsed_payload.get("forward_query", "")).strip()
+        if extracted_query:
+            clean_query = extracted_query
+    except Exception:
+        # Strict token matching fallback in case of JSON syntax anomalies
+        if "CHAT_PATH" in raw_payload_str:
+            decision_path = "CHAT_PATH"
+
+    # Save the sanitized text parameter back to our tracking schema state block
+    ctx.state["user_query"] = clean_query
+
+    # ⚡ ADK 2.0 ENGINE SPECIFICATION COMPLIANCE:
+    # We drop manual text= parameters. The 2.0 router engine will orchestrate 
+    # the target execution nodes, while tracking graph state histories natively via state_schema.
+    if "CHAT_PATH" in decision_path:
+        return Event(route="ROUTE_TO_CHAT", actions={"transfer_to_agent": "FastConversationalAgent"})
     
-    return Event(route="ROUTE_TO_RESEARCH", actions={"transfer_to_agent": "ResearchAgent"}, text=clean_query_string)
+    return Event(route="ROUTE_TO_RESEARCH", actions={"transfer_to_agent": "ResearchAgent"})
 
 # =========================================================
 # 4. STREAMLINED GRAPH TOPOLOGY
