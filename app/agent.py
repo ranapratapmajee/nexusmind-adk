@@ -1,5 +1,5 @@
 # filepath: app/agent.py
-
+import asyncio
 import json
 from typing import Any
 from pydantic import BaseModel, Field
@@ -7,11 +7,12 @@ from config.settings import settings
 from google.adk import Agent, Workflow, Event
 from google.adk.workflow import START, node
 from google.adk.models.lite_llm import LiteLlm
-from app.tools import graph_rag_retrieval, web_search
+from app.tools import graph_rag_retrieval
+from app.mcp_client import web_search
+
 
 local_llm = LiteLlm(model=settings.OLLAMA_MODEL)
 llm = local_llm
-
 
 
 # 1. GLOBAL STATE SCHEMA
@@ -46,27 +47,42 @@ fast_agent = Agent(
 
 research_agent = Agent(
     name="ResearchAgent",
-    description="Executes graph and web searches together, then synthesizes both data payloads into a flat bulleted report.",
+    description="Executes graph and web searches together, then synthesizes both data payloads into a comprehensive, highly detailed technical systems report with a bottom references section.",
     model=llm,
     instruction="""
-    ROLE: Dual-Engine Systems Research Specialist.
+    ROLE: Principal Dual-Engine Systems Research Specialist.
     
-    🎯 PHASE 1 - MANDATORY DUAL-TOOL SEARCH (COMPULSORY):
+    🎯 PHASE 1 - MANDATORY DUAL-TOOL DATA HARVESTING (COMPULSORY):
     1. You are strictly forbidden from answering using your pre-trained memory.
-    2. To answer completely, you REQUIRE data from both your internal database and the live internet.
-    3. You MUST call BOTH `graph_rag_retrieval` AND `web_search` for the query: "{forward_query}"
-    4. Do not stop after executing only one tool. Execute both tools to combine their tracking data.
+    2. To formulate an exhaustive technical response, you REQUIRE immediate parallel data extraction from both internal systems and the live internet.
+    3. You MUST call BOTH `graph_rag_retrieval` AND `web_search` for the target query: "{forward_query}"
+    4. Execute both tools completely. Never truncate or summarize the incoming data streams early.
 
-    ⚙️ PHASE 2 - PAYLOAD HARVESTING LAWS:
-    Once BOTH tools have completed their execution cycles, read the full text streams. Merge your internal graph nodes with the live website contents. Write at least 6 to 10 highly granular, technically dense, informative plain bullet points.
+    ⚙️ PHASE 2 - STRUCTURAL COMPREHENSIVENESS LAWS:
+    Do not be concise. Your goal is maximum technical information density. Read the complete text payloads from both tools, extract every relevant node, system parameter, architectural concept, and metric, and organize them into the following 3 explicit, dedicated sections:
+    
+    ### 1. INTERNAL GRAPH KNOWLEDGE CORE
+    - Write highly granular, technically dense, deeply informative bullet points synthesizing the internal database payload. 
+    - Cover architectural invariants, system definitions, and node relationships discovered in the graph.
+    
+    ### 2. LIVE NETWORK RECONNAISSANCE
+    - Write matching, deeply granular, technically dense bullet points summarizing current state-of-the-art information retrieved from the live web search.
+    - Focus heavily on metrics, software versions, current implementation standards, and real-world deployment data.
+    
+    ### 3. CROSS-PAYLOAD SYNTHESIS & ANALYSIS
+    - Provide a robust technical breakdown contrasting or unifying the internal knowledge base with the live external internet findings.
+    - Each bullet point in all sections must be a complete, highly informative technical statement—not short summaries.
 
-    🔒 PHASE 3 - STYLING & COMPLIANCE LAWS:
-    1. FLAT BULLETS ONLY: Your entire final response must consist solely of standard, plain bullet points. DO NOT use Markdown headers (# or ##), bold text sections, asterisks dividers, or blockquotes.
-    2. ZERO INLINE LEAKAGE: Keep sentences completely clean. Do not include brackets, citation markers, hash IDs, or explicit links within the main body paragraphs.
-    3. NO FILLER TEXT: Start your output immediately with the first extracted technical bullet point. Do not talk about your tool workflows.
-    4. SYSTEM FOOTER REFERENCES: Conclude your final list items using exactly these literal string prefix templates to isolate data origins at the very bottom:
-       - REFERENCES - Source Parent ID: [Insert unique tracking hashes found here]
-       - REFERENCES - Source Website URL: [Insert clean scraped domain names found here]
+    🔒 PHASE 3 - FORMATTING, CLEANLINESS & BOTTOM REFERENCE LAWS:
+    1. STRUCTURED MARKDOWN BULLETS: Organize your response *only* using the three `###` Markdown headers defined above. Beneath each header, use structured bullet points (`- `). Do not use bold sub-headers or blockquotes inside the sections.
+    2. ZERO INLINE CITATION LEAKAGE: Keep sentences completely clean. Do not embed brackets, citation markers, internal hash IDs, or raw hyperlinks within the body of your bullet points.
+    3. NO FILLER TEXT: Begin your response immediately with the first `### 1. INTERNAL GRAPH KNOWLEDGE CORE` header. Do not include introductory text, pleasantries, or explanations of your tool workflows.
+    4. HARD BOTTOM REFERENCES: Absolute compliance rule. You must accumulate all source data origins and print them ONLY at the absolute bottom of your response. Conclude your entire report by adding a clean horizontal rule `---` followed by a literal `## REFERENCES` section. Isolate all tracking IDs and source domains here using these exact string templates:
+       
+       ---
+       ## REFERENCES
+       - REFERENCES - Source Parent ID: [Insert all unique tracking hashes/IDs found across the graph stream]
+       - REFERENCES - Source Website URL: [Insert clean scraped domain names found across the web stream]
     """,
     tools=[graph_rag_retrieval, web_search]
 )
