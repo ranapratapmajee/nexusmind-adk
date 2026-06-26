@@ -3,28 +3,35 @@ import asyncio
 from pathlib import Path
 import streamlit as st
 from google.genai import types
-
-# Native framework runners & custom workflow engines
 from google.adk.runners import InMemoryRunner
-from app.root_gateway import root_agent
-from app.ingest_pipeline import ingest_flow_engine
-from app.infrastructure import pdf_extractor
+from app.agent import root_agent
 
 import warnings
+
+warnings.filterwarnings("ignore", message="Task was destroyed but it is pending!")
 warnings.filterwarnings("ignore", category=UserWarning, module="google.adk")
 
 # 1. PAGE CONFIGURATION & THEME PRESETS
 st.set_page_config(
-    page_title="NexusMind — Nexa Cognitive Assistant", 
+    page_title="NexusMind Workspace — Nexa AI", 
     page_icon="🧠", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 2. INJECT ASYMMETRIC PURE-BUBBLE STYLES (High-Contrast Theme for Visibility)
+# 2. INJECT ASYMMETRIC PURE-BUBBLE STYLES (Light High-Contrast Workspace Theme)
 st.markdown(
     """
     <style>
+    /* Force layout components to utilize full viewport real estate smoothly */
+    div[data-testid="stMainBlockContainer"] {
+        max-width: 100% !important;
+        padding-top: 2rem !important;
+        padding-left: 3rem !important;
+        padding-right: 3rem !important;
+        background-color: #F8FAFC !important; /* Premium clean off-white workspace background */
+    }
+    
     /* Completely hide Streamlit's default background chat wrapper borders and paddings */
     div[data-testid="stChatMessage"] {
         background-color: transparent !important;
@@ -40,41 +47,43 @@ st.markdown(
         padding: 0 !important;
     }
 
-    /* 🟢 USER BUBBLE CUSTOM WRAPPER (Right-Aligned Indigo) */
+    /* 🟢 USER BUBBLE CUSTOM WRAPPER (Sleek Slate Indigo Accent) */
     .user-bubble {
         background: #6366F1 !important;
         color: #FFFFFF !important;
-        padding: 12px 18px !important;
-        border-radius: 18px 18px 2px 18px !important;
-        max-width: 70% !important;
+        padding: 14px 20px !important;
+        border-radius: 20px 20px 4px 20px !important;
+        max-width: 75% !important;
         font-size: 15px !important;
         float: right !important;
         clear: both !important;
         margin-bottom: 18px !important;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05) !important;
+        box-shadow: 0 4px 10px rgba(99, 102, 241, 0.12) !important;
     }
 
-    /* 🔵 ASSISTANT BUBBLE CUSTOM WRAPPER (Dark Slate Background for Complete Visibility) */
+    /* 🔵 ASSISTANT BUBBLE CUSTOM WRAPPER (Premium High-Contrast Light Card Panel) */
     .assistant-bubble {
-        background: #1E293B !important; /* Premium Dark Slate background blocks light background bleeding */
-        color: #FFFFFF !important; /* Forces high-contrast crisp white text */
-        padding: 14px 20px !important;
-        border-radius: 18px 18px 18px 2px !important;
+        background: #FFFFFF !important; /* Clean solid canvas background blocks any bleeding */
+        color: #0F172A !important; /* High contrast crisp slate black text for complete visibility */
+        padding: 20px 24px !important;
+        border-radius: 20px 20px 20px 4px !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
         font-size: 15px !important;
-        line-height: 1.5 !important;
-        border-left: 4px solid #4F46E5 !important; /* Deep accent indicator border */
+        line-height: 1.6 !important;
+        border-left: 5px solid #4F46E5 !important; /* Deep Nexa accent identity border */
         float: left !important;
         clear: both !important;
-        margin-bottom: 18px !important;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.08) !important;
+        width: 100% !important; /* Let long outputs scale naturally over the wide layout grid */
+        margin-bottom: 20px !important;
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04) !important;
     }
     
-    /* Global layout reset for markdown contents inside custom floats */
-    .user-bubble p, .assistant-bubble p {
-        margin: 0 !important;
-        padding: 0 !important;
-        color: inherit !important;
-    }
+    /* Internal typography overrides ensuring clean presentation layouts inside custom layouts */
+    .assistant-bubble p { margin-bottom: 12px !important; color: #0F172A !important; }
+    .assistant-bubble ul, .assistant-bubble ol { margin-left: 20px !important; margin-bottom: 12px !important; color: #0F172A !important; }
+    .assistant-bubble li { margin-bottom: 6px !important; }
+    .assistant-bubble h1, .assistant-bubble h2, .assistant-bubble h3 { color: #0F172A !important; margin-top: 16px !important; margin-bottom: 10px !important; font-weight: 600 !important; }
+    .user-bubble p { margin: 0 !important; padding: 0 !important; color: inherit !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -104,49 +113,33 @@ def run_async_task(coro):
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- SIDEBAR ATTACHMENT: DIRECT FILE INGESTION VIA WORKING WRAPPER ---
+# --- SIDEBAR ATTACHMENT: BRANDED INTERACTION MANAGEMENT ---
 with st.sidebar:
-    st.header("📁 Data Ingestion Console")
-    st.write("Load raw PDF documents into Chroma and Neo4j databases concurrently.")
-    uploaded_pdf = st.file_uploader("Select Target PDF Document", type=["pdf"])
+    st.title("🧠 NexusMind")
+    st.caption("Enterprise Cognitive Workspace — Core v1.0")
+    st.markdown("---")
+    st.subheader("🪐 Agent Status")
+    st.success("🤖 Nexa Core Active")
+    st.info("🔗 Gateway Connected")
     
-    if uploaded_pdf is not None and st.button("🚀 Execute Ingestion Pipeline"):
-        with st.spinner("Staging asset locally and executing isolated indexing workflow..."):
-            try:
-                data_dir = Path("data")
-                data_dir.mkdir(exist_ok=True)
-                saved_path = data_dir / uploaded_pdf.name
-                
-                with open(saved_path, "wb") as f:
-                    f.write(uploaded_pdf.getbuffer())
-                
-                with open(saved_path, "rb") as f:
-                    raw_bytes = f.read()
-                parsed_text_dump = pdf_extractor.extract_clean_text(raw_bytes)
-                
-                report_output = run_async_task(ingest_flow_engine.ingest_pdf_document(
-                    file_content_stream=parsed_text_dump, 
-                    filename=uploaded_pdf.name
-                ))
-                
-                st.success(f"✅ Ingested {uploaded_pdf.name} successfully!")
-                st.markdown(report_output.get("markdown_answer", "Pipeline executed successfully."))
-            except Exception as ex:
-                st.error(f"❌ Ingestion pipeline failed: {str(ex)}")
+    if st.button("🧹 Reset Active Session", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
 
 # --- CENTER CANVAS ALIGNMENT GRID CONTAINER ---
-_, center_canvas, _ = st.columns([1.2, 5.0, 1.2])
+_, center_canvas, _ = st.columns([0.5, 7.0, 0.5])
 
 with center_canvas:
     # Render Centered Clean Hero Workspace Header if message stream history is pristine
     if not st.session_state.messages:
         st.markdown(
             """
-            <div style="text-align: center; margin-top: 8vh; margin-bottom: 4vh; clear: both;">
-                <div style="font-family: monospace; font-size: 0.85rem; color: #6366F1; font-weight: 600; letter-spacing: 1px; margin-bottom: 4px;">NEXUS // CORE</div>
-                <div style="font-size: 2.0rem; font-weight: 700; letter-spacing: -0.5px;">Ask anything. Research deeply.</div>
-                <div style="font-size: 0.9rem; opacity: 0.6; max-width: 540px; margin: 8px auto 0 auto; line-height: 1.4;">
-                    A high-density engineering workspace for source-grounded exploration, GraphRAG processing, and token-clean chat interactions.
+            <div style="text-align: center; margin-top: 12vh; margin-bottom: 6vh; clear: both;">
+                <div style="font-family: monospace; font-size: 0.85rem; color: #4F46E5; font-weight: 600; letter-spacing: 1.5px; margin-bottom: 8px;">NEXUSMIND // INTELLIGENCE SYSTEM</div>
+                <div style="font-size: 2.5rem; font-weight: 700; letter-spacing: -0.5px; color: #0F172A;">Meet Nexa, Your Cognitive Assistant.</div>
+                <div style="font-size: 1.0rem; color: #334155; max-width: 600px; margin: 12px auto 0 auto; line-height: 1.5; opacity: 0.8;">
+                    A high-density engineering workspace optimized for source-grounded exploration, adaptive GraphRAG execution, and clean topological routing.
                 </div>
             </div>
             """,
@@ -161,7 +154,7 @@ with center_canvas:
             st.markdown(f"<div class='assistant-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
 
 # --- FLOATING MACRO COMPOSER CONTROL INPUT BOTTOM BAR ---
-user_input = st.chat_input("Ask Nexa a question or analyze infrastructure vectors...")
+user_input = st.chat_input("Message Nexa or submit system orchestration queries...")
 
 if user_input:
     clean_input = user_input.strip()
@@ -172,7 +165,7 @@ if user_input:
             st.markdown(f"<div class='user-bubble'>{clean_input}</div>", unsafe_allow_html=True)
                 
             with st.chat_message("assistant"):
-                with st.spinner("🧠 Nexa is thinking..."):
+                with st.spinner("🧠 Nexa is generating response..."):
                     try:
                         # 1. Trigger the asynchronous stream payload from your gateway runner
                         outcome_stream = chat_runner.run_async(
@@ -190,7 +183,7 @@ if user_input:
                             async for event in outcome_stream:
                                 author = getattr(event, "author", "").strip()
                                 
-                                if author in ["FastConversationalAgent", "ResponseAgent"]:
+                                if author in ["FastConversationalAgent", "ResearchAgent"]:
                                     if hasattr(event, "text") and event.text:
                                         text_pieces.append(event.text)
                                     elif hasattr(event, "content") and hasattr(event.content, "parts"):
@@ -213,6 +206,10 @@ if user_input:
                         # 3. Resolve the filtered stream data safely within the runtime thread pool
                         answer_string = run_async_task(stream_accumulator())
                         answer = answer_string.strip() if answer_string else "No response generated by the cognitive topology."
+                        
+                        # DEFENSIVE CLEANUP LOGIC: Strip out raw prompt echoes or control artifacts if leaked by intermediate ADK nodes
+                        if answer.startswith(clean_input):
+                            answer = answer.replace(clean_input, "", 1).strip().strip("`json").strip("`").strip()
                         
                         # Render final clean response utilizing the premium assistant-bubble markup styles
                         st.markdown(f"<div class='assistant-bubble'>{answer}</div>", unsafe_allow_html=True)

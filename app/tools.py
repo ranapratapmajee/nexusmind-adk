@@ -1,72 +1,8 @@
 # filepath: app/tools.py
 import logging
-import httpx
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse, urlunparse
-
-# Point straight to unified, thread-isolated consolidated singletons
 from app.services import vector_store, graph_db
 
 logger = logging.getLogger(__name__)
-
-DUCKDUCKGO_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
-
-def _clean_text(value: str) -> str:
-    """White-space compressor utility."""
-    return " ".join((value or "").split()).strip()
-
-
-def _fetch_url_text_sync(url: str, max_chars: int = 4000) -> str:
-    """
-    Synchronous implementation of your scraper project.
-    Fetches the deep web page using trafilatura with a BeautifulSoup fallback.
-    """
-    if not url or not url.strip():
-        return ""
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-
-    try:
-        with httpx.Client(timeout=8.0, headers=headers, follow_redirects=True) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            html = resp.text
-    except Exception as e:
-        logger.warning(f"⚠️ Could not deep scrape URL: {url} | Reason: {e}")
-        return ""
-
-    # Attempt high-performance extraction via trafilatura first
-    try:
-        import trafilatura
-        extracted = trafilatura.extract(html) or ""
-    except Exception:
-        extracted = ""
-
-    # Native BeautifulSoup fallback if trafilatura yields nothing
-    if not extracted:
-        try:
-            soup = BeautifulSoup(html, "html.parser")
-            for tag in soup(["script", "style", "noscript", "header", "footer", "svg"]):
-                tag.decompose()
-            extracted = soup.get_text(" ", strip=True)
-        except Exception:
-            return ""
-
-    clean_payload = _clean_text(extracted)
-    return (
-        f"{clean_payload[:max_chars]}..."
-        if len(clean_payload) > max_chars
-        else clean_payload
-    )
-
-
-# =========================================================
-# HIGH-RELIABILITY HYBRID RETRIEVAL TOOLS (UNIFIED INTERFACE)
-# =========================================================
-
-# filepath: app/tools.py
 
 def graph_rag_retrieval(query: str) -> str:
     """
@@ -97,14 +33,15 @@ def graph_rag_retrieval(query: str) -> str:
     # 🛡️ THE DEDUPLICATION GUARD: Tracks parent nodes we've already printed
     seen_parent_ids = set()
 
+    # 🛠️ FIXED: Cleaned up properties mismatch to permanently stop DBMS notification warnings
     cypher_hybrid_query = """
     MATCH (c:DocumentNode {id: $chunk_id})
     OPTIONAL MATCH (c)-[:CHILD_OF]->(p:DocumentNode)
     OPTIONAL MATCH (entity)-[:MENTIONED_IN]->(c)
     RETURN DISTINCT p.id AS parent_id, 
-                    coalesce(p.text, p.content, p.body, '') AS parent_text, 
+                    coalesce(p.text, '') AS parent_text, 
                     collect(DISTINCT {
-                        name: coalesce(entity.id, entity.name, ''), 
+                        name: coalesce(entity.id, ''), 
                         type: labels(entity)[0]
                     }) AS concepts
     """
@@ -151,91 +88,3 @@ def graph_rag_retrieval(query: str) -> str:
             continue
 
     return "\n".join(narrative)
-
-
-def web_search(query: str) -> str:
-    """
-    Queries live public internet directories for current information, 
-    extracts the top results, and scrapes the full content of those pages 
-    to provide deep technical facts. Skips tracking redirects.
-    """
-    phrase_clean = str(query).strip()
-    if not phrase_clean:
-        return "No live internet search keywords were provided."
-
-    print(f"🌐 [Web Search] Dispatching high-density search & deep scrape for: '{phrase_clean}'")
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-
-    try:
-        with httpx.Client(timeout=10.0, headers=headers, follow_redirects=True) as client:
-            resp = client.post(DUCKDUCKGO_HTML_ENDPOINT, data={"q": phrase_clean})
-            resp.raise_for_status()
-            html = resp.text
-    except Exception as e:
-        logger.error(f"❌ Live external web lookup network failure: {e}")
-        return f"Web search could not retrieve live documentation insights for: '{phrase_clean}'."
-
-    soup = BeautifulSoup(html, "html.parser")
-    compiled_blocks = ["LIVE PUBLIC INTERNET DEEP-SCRAPE DATA:"]
-    
-    scraped_count = 0
-    for result in soup.select(".result"):
-        if scraped_count >= 2:  # Scaled down to 2 targets to prevent context explosion
-            break
-
-        link_el = result.select_one(".result__title a")
-        if not link_el:
-            continue
-
-        title = _clean_text(link_el.get_text(" ", strip=True))
-        raw_href = _clean_text(link_el.get("href", ""))
-
-        if not raw_href:
-            continue
-
-        # 🛡️ FIX: Intercept domain redirects and tracking variables safely
-        try:
-            parsed_url = urlparse(raw_href)
-            domain = str(parsed_url.netloc).lower()
-            path = str(parsed_url.path).lower()
-            
-            # Instantly drop ad redirect networks
-            if "duckduckgo.com" in domain and ("y.js" in path or "click" in path):
-                continue
-            if any(bad_token in domain for bad_token in ["bing.com", "doubleclick", "adservice", "googleadservices"]):
-                continue
-            if "ad_domain" in str(parsed_url.query).lower():
-                continue
-
-            # Strip tracking queries for clean citation logging
-            clean_href = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, "", ""))
-        except Exception:
-            continue
-
-        deep_content = _fetch_url_text_sync(clean_href, max_chars=2000)
-        
-        if deep_content:
-            scraped_count += 1
-            compiled_blocks.append(
-                f"\n--- [Web Source Reference: {title}] ---\n"
-                f"URL Address: {clean_href}\n"
-                f"Full Scraped Webpage Content:\n{deep_content}"
-            )
-        else:
-            snippet_el = result.select_one(".result__snippet")
-            fallback_snippet = _clean_text(snippet_el.get_text(" ", strip=True) if snippet_el else "")
-            if fallback_snippet:
-                scraped_count += 1
-                compiled_blocks.append(
-                    f"\n--- [Web Source Snippet: {title}] ---\n"
-                    f"URL Address: {clean_href}\n"
-                    f"Summary Insight: {fallback_snippet}"
-                )
-
-    if scraped_count == 0:
-        return "Search engine returned results, but the organic landing targets rejected connections."
-
-    return "\n".join(compiled_blocks)
