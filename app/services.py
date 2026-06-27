@@ -3,10 +3,11 @@ import io
 import re
 import logging
 from typing import List, Dict, Any
-import requests
-from pypdf import PdfReader
+import httpx  # 🟢 Upgraded from 'requests' to support true async connection pooling
+import chromadb
 from chromadb import HttpClient
 from neo4j import GraphDatabase
+from pypdf import PdfReader
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -31,10 +32,7 @@ class PDFProcessorService:
 
     @staticmethod
     def slice_hierarchical_chunks(text: str, document_name: str, parent_size: int = 2000, child_size: int = 400, overlap: int = 100) -> List[Dict[str, Any]]:
-        """
-        Slices text into paired parent and child chunks using a standardized string 
-        identification convention to match Chroma and Neo4j keys cleanly.
-        """
+        """Slices text into paired parent and child chunks using strict key tracking mappings."""
         logger.info(f"Slicing document context: {document_name}")
         hierarchical_map = []
         
@@ -42,8 +40,8 @@ class PDFProcessorService:
         parent_idx = 1
         child_idx = 1
         
-        # Build clean uppercase prefix token for standardized lookup keys (e.g., "REPORT")
         base_doc_name = document_name.split(".")[0].upper()
+        base_doc_name = re.sub(r"[^A-Z0-9_]", "_", base_doc_name)
         
         while start_idx < len(text):
             end_idx = min(start_idx + parent_size, len(text))
@@ -83,39 +81,40 @@ class PDFProcessorService:
 
 
 # =========================================================
-# 2. CHROMA VECTOR STORAGE ENGINE
+# 2. CHROMA VECTOR STORAGE ENGINE (ASYNC UPGRADE)
 # =========================================================
 
 class VectorStoreService:
-    """Manages persistent HTTP vector collection connections and local embedding hooks."""
+    """Manages persistent vector collection connections with async batch processing capability."""
     
     def __init__(self):
+        # We preserve the standard HttpClient for collection setups
         self.client = HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
-        self.embedding_url = f"{settings.LOCAL_LLM_URL}/api/embeddings"
+        self.embedding_url = f"{settings.LOCAL_LLM_URL.rstrip('/')}/api/embeddings"
         self.model_name = settings.EMBEDDING_MODEL
         
-    def _generate_embedding(self, text_content: str) -> List[float]:
-        """Queries local Ollama endpoint to return dense vector representations."""
+    async def _generate_embedding_async(self, client: httpx.AsyncClient, text_content: str) -> List[float]:
+        """🟢 Non-blocking async vector computation hitting Ollama thread pools."""
         try:
-            resp = requests.post(
+            resp = await client.post(
                 self.embedding_url, 
                 json={"model": self.model_name, "prompt": text_content}, 
-                timeout=15
+                timeout=60.0
             )
             resp.raise_for_status()
             return resp.json().get("embedding", [])
         except Exception as e:
-            logger.error(f"Dense vector embedding generation failure: {str(e)}")
+            logger.error(f"Async vector embedding generation failure: {str(e)}")
             raise RuntimeError(f"Vector embedding failure: {str(e)}")
 
     def get_or_create_collection(self, collection_name: str = "nexus_knowledge_pool"):
-        """Returns targeted HTTP collection instance."""
+        """Returns targeted collection instance."""
         return self.client.get_or_create_collection(name=collection_name)
 
-    def insert_child_vector(self, child_id: str, child_text: str, parent_id: str):
-        """Commits standard child vector with explicit parent reference metadata."""
+    async def insert_child_vector_async(self, client: httpx.AsyncClient, child_id: str, child_text: str, parent_id: str):
+        """🟢 High-speed async write embedding task utilizing connection-pooled clients."""
         collection = self.get_or_create_collection()
-        embedding = self._generate_embedding(child_text)
+        embedding = await self._generate_embedding_async(client, child_text)
         
         collection.add(
             ids=[child_id],
@@ -127,11 +126,11 @@ class VectorStoreService:
 
 
 # =========================================================
-# 3. NEO4J GRAPH DATABASE ENGINE
+# 3. NEO4J GRAPH DATABASE ENGINE (ASYNC UPGRADE)
 # =========================================================
 
 class GraphDBService:
-    """Manages transactional schema optimizations and hierarchical graph edge structures."""
+    """Manages transactional schema optimizations with high-speed async session operations."""
     
     def __init__(self):
         self._driver = GraphDatabase.driver(
@@ -154,8 +153,8 @@ class GraphDBService:
         except Exception as e:
             logger.warning(f"Could not apply structural constraints automatically: {str(e)}")
 
-    def save_hierarchical_edge(self, child_id: str, parent_id: str, parent_text: str):
-        """Natively maps a Child chunk to its Parent context frame in Neo4j."""
+    async def save_hierarchical_edge_async(self, child_id: str, parent_id: str, parent_text: str):
+        """🟢 Asynchronously maps a Child chunk to its Parent context frame in Neo4j."""
         cypher_query = """
         MERGE (c:DocumentNode {id: $child_id})
         SET c.type = 'ChildChunk'
@@ -166,40 +165,29 @@ class GraphDBService:
         MERGE (c)-[:CHILD_OF]->(p);
         """
         try:
-            with self._driver.session() as session:
-                session.run(cypher_query, child_id=child_id, parent_id=parent_id, parent_text=parent_text)
+            # Utilizing drivers in non-blocking async context managers
+            async with self._driver.session() as session:
+                await session.run(cypher_query, child_id=child_id, parent_id=parent_id, parent_text=parent_text)
         except Exception as e:
-            logger.error(f"Neo4j write transaction crashed: {str(e)}")
+            logger.error(f"Neo4j async edge transaction crashed: {str(e)}")
             raise e
 
-    def save_concept_mention(self, name: str, type: str, target_chunk_id: str):
-        """
-        🌐 DYNAMIC ALGORITHMIC NORMALIZATION:
-        Binds extracted conceptual entity nodes directly to their chunk source.
-        Cleans string casing, text variations, and type drift dynamically
-        without using hardcoded dictionaries—making it compatible with any PDF domain.
-        """
+    async def save_concept_mention_async(self, name: str, type: str, target_chunk_id: str):
+        """🌐 Asynchronously binds extracted entities directly to target Neo4j nodes."""
         chunk_id = str(target_chunk_id).strip()
         if not name or not chunk_id:
             return
 
-        # 🧼 Step 1: Normalize capitalization and strip outer spaces
         clean_name = str(name).strip().upper()
-        
-        # 🧼 Step 2: Strip inline text noise (e.g., parentheses, special characters)
-        # Converts "Regularization (L1 >> Lasso)" -> "REGULARIZATION L1 LASSO"
         clean_name = re.sub(r'[^\w\s-]', '', clean_name)
         clean_name = re.sub(r'\s+', ' ', clean_name).strip()
 
-        # 🧼 Step 3: Sanitize and validate incoming node labels
         raw_label = str(type).strip().upper()
         safe_label = "".join([c for c in raw_label if c.isalnum()]).upper()
         
-        # Force a strict schema fallback to avoid creating uncontrolled label variations
         if safe_label not in ["CONCEPT", "TECHNOLOGY", "SYSTEM"]:
             safe_label = "CONCEPT"
 
-        # 💎 Step 4: Transaction execution using exact target identifiers
         cypher_query = f"""
         MERGE (e:{safe_label} {{id: $entity_id}})
         WITH e
@@ -207,10 +195,10 @@ class GraphDBService:
         MERGE (e)-[:MENTIONED_IN]->(c);
         """
         try:
-            with self._driver.session() as session:
-                session.run(cypher_query, entity_id=clean_name, chunk_id=chunk_id)
+            async with self._driver.session() as session:
+                await session.run(cypher_query, entity_id=clean_name, chunk_id=chunk_id)
         except Exception as e:
-            logger.error(f"Neo4j dynamic linkage failure: {str(e)}")
+            logger.error(f"Neo4j async dynamic linkage failure: {str(e)}")
 
 
 # =========================================================

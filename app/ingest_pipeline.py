@@ -3,6 +3,7 @@ import re
 import logging
 import json
 import uuid
+import asyncio  # 🟢 Required for awaiting async methods
 from typing import Dict, Any, List
 from google.genai import types
 from google.adk import Agent, Workflow
@@ -11,6 +12,7 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.workflow import START, node
 from pydantic import BaseModel, Field
 from config.settings import settings
+import httpx  # 🟢 Required to pass to the async vector store
 
 from app.services import pdf_processor, vector_store, graph_db
 
@@ -53,49 +55,29 @@ entity_extractor_agent = Agent(
 # 3. DETERMINISTIC DATA WRITER & NORMALIZATION NODE
 # =========================================================
 
-
 def repair_truncated_json(raw_text: str) -> str:
-    """
-    🛡️ STRUCTURAL JSON FAULT RECOVERY LAYER:
-    Detects and auto-repairs truncated or clipped JSON blocks output by local models,
-    guaranteeing successful string compilation even if mid-token truncations occur.
-    """
+    """🛡️ STRUCTURAL JSON FAULT RECOVERY LAYER"""
     fixed_text = raw_text.strip()
-    
-    # 🧯 Case 1: If the string ends inside an unclosed property value (e.g., `"type": "Technolog`)
-    # Capture unclosed keys or string assignments and slap on missing quote/brackets
     if fixed_text.count('"') % 2 != 0:
-        # Check if it was cut off inside a string value block
         if re.search(r'":\s*"[^"]*$', fixed_text):
             fixed_text += '"}'
         else:
             fixed_text += '"'
-
-    # 🧯 Case 2: Clean up dangling, half-written keys/values like `{"name":`
-    fixed_text = re.sub(r',\s*["\w\s]*:\s*$', '', fixed_text) # Strip dangling keys after commas
-    fixed_text = re.sub(r'{\s*["\w\s]*:\s*$', '', fixed_text) # Strip dangling keys at opening loops
-    
-    # 🧯 Case 3: Fix trailing array/object brackets balance
+    fixed_text = re.sub(r',\s*["\w\s]*:\s*$', '', fixed_text)
+    fixed_text = re.sub(r'{\s*["\w\s]*:\s*$', '', fixed_text)
     open_brackets = fixed_text.count('[') - fixed_text.count(']')
     open_braces = fixed_text.count('{') - fixed_text.count('}')
-    
-    # Dynamically append structural terminations if missing
     if open_braces > 0:
         fixed_text += "}" * open_braces
     if open_brackets > 0:
         fixed_text += "]" * open_brackets
-        
     return fixed_text
 
 @node
 def clean_and_parse_extraction(ctx: Workflow, node_input: Any) -> str:
-    """
-    🌟 THE POLYMORPHIC WORKER BRIDGE:
-    Parses payloads, auto-repairs truncated JSON data anomalies, and updates Neo4j.
-    """
+    """🌟 THE POLYMORPHIC WORKER BRIDGE: Re-wired to handle safe async database session mapping"""
     raw_payload = ctx.state.get("extracted_entities_raw", "").strip()
     
-    # RECOVERY: Reconstruct active chunk context via session token segments
     fallback_chunk_id = ""
     try:
         if hasattr(ctx, "session_id") and ctx.session_id and "session--" in ctx.session_id:
@@ -111,7 +93,6 @@ def clean_and_parse_extraction(ctx: Workflow, node_input: Any) -> str:
         raw_payload = raw_payload[4:].strip()
 
     try:
-        # 🔧 Fix applied right before loading: Run text repair pass first
         sanitized_payload = repair_truncated_json(raw_payload)
         parsed_data = json.loads(sanitized_payload)
         
@@ -119,7 +100,6 @@ def clean_and_parse_extraction(ctx: Workflow, node_input: Any) -> str:
         entities = []
 
         if isinstance(parsed_data, list):
-            logger.info("ℹ️ Local LLM bypassed object wrappers; routing via session string fallback.")
             entities = parsed_data
             target_chunk = fallback_chunk_id
         elif isinstance(parsed_data, dict):
@@ -133,12 +113,19 @@ def clean_and_parse_extraction(ctx: Workflow, node_input: Any) -> str:
             return "❌ Finished with missing metadata extraction matching gaps."
 
         committed_count = 0
+        
+        # Hook into current runtime loop to cleanly await the database singletons
+        loop = asyncio.get_event_loop()
+        
         for entity in entities:
             if isinstance(entity, dict):
                 name = entity.get("name")
                 ent_type = entity.get("type", "Concept")
                 if name:
-                    graph_db.save_concept_mention(name=name, type=ent_type, target_chunk_id=target_chunk)
+                    # 🟢 Scheduled cleanly onto the background thread pool
+                    loop.create_task(graph_db.save_concept_mention_async(
+                        name=name, type=ent_type, target_chunk_id=target_chunk
+                    ))
                     committed_count += 1
                 
         logger.info(f"💾 Graph write pass complete. Forged {committed_count} semantic links for chunk: {target_chunk}")
@@ -149,7 +136,7 @@ def clean_and_parse_extraction(ctx: Workflow, node_input: Any) -> str:
         return f"Normalization exception: {str(e)}"
 
 # =========================================================
-# 4. WORKFLOW TOPOLOGY DEFINITION (CLEAN & STREAMLINED)
+# 4. WORKFLOW TOPOLOGY DEFINITION
 # =========================================================
 ingest_workflow_pipeline = Workflow(
     name="IngestionPipeline",
@@ -161,7 +148,7 @@ ingest_workflow_pipeline = Workflow(
 )
 
 # =========================================================
-# 5. EXECUTION ENGINE FLOW MANAGER
+# 5. EXECUTION ENGINE FLOW MANAGER (MAINTAINING STRUCTURE)
 # =========================================================
 class NexusIngestionFlowEngine:
     @staticmethod
@@ -181,53 +168,60 @@ class NexusIngestionFlowEngine:
                 
             report_accumulator = []
             
-            for block in hierarchical_chunks:
-                p_id = block["parent_id"]
-                p_text = block["parent_text"]
-                child_fragments = block["children"]
+            # 🟢 Open a shared, high-speed asynchronous connection pool for HTTP tasks
+            async with httpx.AsyncClient(timeout=60.0) as http_client:
                 
-                print(f"\n📦 Analyzing Parent Segment Block [ {p_id} ]")
-                
-                for child in child_fragments:
-                    c_id = child["id"]
-                    c_text = child["text"]
+                # 🛡️ KEPT ORIGINAL ARCHITECTURE LOOP STRUCTURE UNTOUCHED
+                for block in hierarchical_chunks:
+                    p_id = block["parent_id"]
+                    p_text = block["parent_text"]
+                    child_fragments = block["children"]
                     
-                    print(f"📡 Processing [ {c_id} ] ➔ Vector Store & Graph Node Assembly...")
+                    print(f"\n📦 Analyzing Parent Segment Block [ {p_id} ]")
                     
-                    # ✅ LAYER 1: Core Database Writes happen deterministically via safe Python calls
-                    vector_store.insert_child_vector(child_id=c_id, child_text=c_text, parent_id=p_id)
-                    graph_db.save_hierarchical_edge(child_id=c_id, parent_id=p_id, parent_text=p_text)
-                    
-                    # ✅ LAYER 2: Multi-Agent Pipeline session identifier serialization
-                    # Encodes the active chunk id safely within double-dash boundaries
-                    isolated_session = f"session--{c_id}--{uuid.uuid4().hex[:6]}"
-                    
-                    message_payload_string = (
-                        f"CHUNK_ID: {c_id}\n"
-                        f"CHUNK_TEXT:\n{c_text}"
-                    )
-                    
-                    outcome_stream = pipeline_runner.run_async(
-                        user_id="ingest_cli_service",
-                        session_id=isolated_session,
-                        new_message=types.Content(
-                            role="user",
-                            parts=[types.Part.from_text(text=message_payload_string)]
+                    for child in child_fragments:
+                        c_id = child["id"]
+                        c_text = child["text"]
+                        
+                        print(f"📡 Processing [ {c_id} ] ➔ Vector Store & Graph Node Assembly...")
+                        
+                        # 🟢 LAYER 1 UPGRADE: Replaced with high-speed async iterations
+                        await vector_store.insert_child_vector_async(
+                            client=http_client, child_id=c_id, child_text=c_text, parent_id=p_id
                         )
-                    )
+                        await graph_db.save_hierarchical_edge_async(
+                            child_id=c_id, parent_id=p_id, parent_text=p_text
+                        )
+                        
+                        # LAYER 2: Multi-Agent Pipeline execution path
+                        isolated_session = f"session--{c_id}--{uuid.uuid4().hex[:6]}"
+                        
+                        message_payload_string = (
+                            f"CHUNK_ID: {c_id}\n"
+                            f"CHUNK_TEXT:\n{c_text}"
+                        )
+                        
+                        outcome_stream = pipeline_runner.run_async(
+                            user_id="ingest_cli_service",
+                            session_id=isolated_session,
+                            new_message=types.Content(
+                                role="user",
+                                parts=[types.Part.from_text(text=message_payload_string)]
+                            )
+                        )
 
-                    text_accumulator = ""
-                    async for event in outcome_stream:
-                        if hasattr(event, "text") and event.text:
-                            text_accumulator += event.text
-                        elif hasattr(event, "content") and event.content:
-                            c = event.content
-                            if hasattr(c, "parts"):
-                                for part in c.parts:
-                                    if hasattr(part, "text") and part.text:
-                                        text_accumulator += part.text
-                                        
-                    report_accumulator.append(text_accumulator.strip())
+                        text_accumulator = ""
+                        async for event in outcome_stream:
+                            if hasattr(event, "text") and event.text:
+                                text_accumulator += event.text
+                            elif hasattr(event, "content") and event.content:
+                                c = event.content
+                                if hasattr(c, "parts"):
+                                    for part in c.parts:
+                                        if hasattr(part, "text") and part.text:
+                                            text_accumulator += part.text
+                                            
+                        report_accumulator.append(text_accumulator.strip())
 
             print("\n🏁 All parent/child workflow blocks synthesized safely.")
             unified_report = "\n\n".join([r for r in report_accumulator if r])
