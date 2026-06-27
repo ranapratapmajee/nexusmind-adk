@@ -17,17 +17,18 @@ mcp_config = StdioServerParameters(
         "OMEGA_SEARCH_MAX_RESULTS": "5",
         "OMEGA_ENV": "dev",
 
-    #     # Neo4j Container Settings
-    #     "NEO4J_URI": "bolt://localhost:7687",
-    #     "NEO4J_USER": "neo4j",
-    #     "NEO4J_PASSWORD": "rana1234",
+        # Neo4j Container Settings
+        "NEO4J_URI": "bolt://localhost:7687",
+        "NEO4J_USER": "neo4j",
+        "NEO4J_PASSWORD": "rana1234",
         
-    #     # ChromaDB HTTP Service Settings
-    #     "CHROMA_HOST": "localhost",
-    #     "CHROMA_PORT": "8000",
+        # ChromaDB HTTP Service Settings
+        "CHROMA_HOST": "localhost",
+        "CHROMA_PORT": "8000",
+        "CHROMA_COLLECTION": "nexus_knowledge_pool",
         
-    #     # Keep your system path alive so uv can find commands
-         "PATH": os.environ.get("PATH", "")
+        # Keep your system path alive so uv can find commands
+        "PATH": os.environ.get("PATH", "")
     }
 )
 
